@@ -1,0 +1,21 @@
+# Garmin tokens — never commit credentials
+.garmin_tokens/
+.garmin_session.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Env files
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
