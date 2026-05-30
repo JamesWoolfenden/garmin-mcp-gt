@@ -1,4 +1,4 @@
-# garmin-mcp
+# garmin-mcp-gt
 
 Garmin Connect MCP server — exposes your Garmin health and activity data as tools for Claude.
 
@@ -21,13 +21,13 @@ Garmin Connect MCP server — exposes your Garmin health and activity data as to
 ## Installation
 
 ```bash
-pip install garmin-mcp
+pip install garmin-mcp-gt
 ```
 
 Or with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install garmin-mcp
+uv tool install garmin-mcp-gt
 ```
 
 ## Setup
@@ -48,7 +48,7 @@ Add to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "garmin": {
-      "command": "garmin-mcp"
+      "command": "garmin-mcp-gt"
     }
   }
 }
@@ -66,7 +66,7 @@ On Windows:
 {
   "mcpServers": {
     "garmin": {
-      "command": "garmin-mcp",
+      "command": "garmin-mcp-gt",
       "env": {
         "GARMIN_TOKEN_DIR": "/path/to/tokens"
       }
