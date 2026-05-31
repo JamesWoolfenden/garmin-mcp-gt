@@ -3,7 +3,7 @@
 # Run manually or via Task Scheduler (see setup_task.ps1)
 # Put API_SECRET=<value> in .env.local (gitignored) in this directory
 
-$envFile = Join-Path $PSScriptRoot ".env.local"
+$envFile = Join-Path $PSScriptRoot "backend\.env.local"
 if (-not (Test-Path $envFile)) {
     Write-Error ".env.local not found. Create it with API_SECRET=<your-secret>."
     exit 1
@@ -17,7 +17,7 @@ foreach ($line in Get-Content $envFile) {
 $env:PORT = "8080"
 
 Write-Host "[fuel] Starting Garmin sidecar..."
-Start-Process powershell -ArgumentList "-NoExit -Command `"cd E:\Code\garmin; foreach (`$line in Get-Content .env.local) { if (`$line -match '^([^#][^=]+)=(.*)$') { Set-Item env:`$Matches[1].Trim() `$Matches[2].Trim() } }; `$env:PORT='8080'; python server.py`"" -WindowStyle Normal
+Start-Process powershell -ArgumentList "-NoExit -Command `"cd E:\Code\garmin; foreach (`$line in Get-Content backend\.env.local) { if (`$line -match '^([^#][^=]+)=(.*)$') { Set-Item env:`$Matches[1].Trim() `$Matches[2].Trim() } }; `$env:PORT='8080'; python server.py`"" -WindowStyle Normal
 
 Start-Sleep 3
 
