@@ -106,6 +106,7 @@ def claude_parse_food(text: str) -> dict[str, Any]:
         messages=[{"role": "user", "content": text}],
     )
     raw = msg.content[0].text.strip()
+    raw = raw.replace("```json", "").replace("```", "").strip()
     return json.loads(raw)
 
 

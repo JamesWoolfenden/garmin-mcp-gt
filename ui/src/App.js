@@ -64,6 +64,10 @@ function PushToggle({ pushState, onSubscribe, onUnsubscribe }) {
   if (pushState === "unsupported") return null;
   if (pushState === "subscribed")
     return <button className="push-btn active" onClick={onUnsubscribe}>Nudges on</button>;
+  if (pushState === "denied")
+    return <span className="push-err">Notifications blocked — check browser settings</span>;
+  if (pushState.startsWith("error:"))
+    return <span className="push-err" title={pushState.slice(6)}>Nudge setup failed</span>;
   return (
     <button className="push-btn" onClick={onSubscribe} disabled={pushState === "loading"}>
       {pushState === "loading" ? "Enabling…" : "Enable nudges"}

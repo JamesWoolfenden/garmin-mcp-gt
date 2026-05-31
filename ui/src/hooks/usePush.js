@@ -41,7 +41,7 @@ export function usePush() {
       setState("subscribed");
     } catch (err) {
       console.error("Push subscribe failed:", err);
-      setState("error");
+      setState("error:" + (err?.message || "unknown"));
     }
   }, []);
 
