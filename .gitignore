@@ -2,6 +2,15 @@
 .garmin_tokens/
 .garmin_session.json
 
+# VAPID / push notification keys — never commit
+backend/private_key.pem
+backend/public_key.pem
+**/private_key.pem
+**/public_key.pem
+
+# Build artefacts
+**/files.zip
+
 # Python
 __pycache__/
 *.py[cod]

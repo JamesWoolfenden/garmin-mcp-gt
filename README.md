@@ -1,86 +1,96 @@
-# garmin-mcp-gt
+# garmin-sidecar
 
-Garmin Connect MCP server — exposes your Garmin health and activity data as tools for Claude.
-
-## Tools
-
-| Tool | Description |
-|------|-------------|
-| `get_today_stats` | Steps, distance, calories, active time, resting HR, body battery |
-| `get_recent_activities` | Recent cycling/running activities (de-duplicated) |
-| `get_activity_detail` | Detailed metrics, HR zones, and power zones for a specific activity |
-| `get_sleep` | Sleep score, stages, SpO2, and stress for any night |
-| `get_hrv` | Overnight HRV readings for the last N days |
-| `get_weekly_trends` | Weekly cycling summary with km, hours, and avg power |
-
-## Requirements
-
-- Python 3.10+
-- A [Garmin Connect](https://connect.garmin.com) account
-
-## Installation
-
-```bash
-pip install garmin-mcp-gt
-```
-
-Or with [uv](https://docs.astral.sh/uv/):
-
-```bash
-uv tool install garmin-mcp-gt
-```
+Thin FastAPI HTTP wrapper over garmin-mcp-gt. Exposes two endpoints for
+the Fuel Cloud Run backend to call via Cloudflare Tunnel.
 
 ## Setup
 
-Authenticate once to save your session tokens:
+### 1. Install dependencies
 
-```bash
+```shell
+pip install fastapi uvicorn garmin-mcp-gt
+```
+
+Authenticate Garmin once (if not already done):
+
+```shell
 garmin-setup
 ```
 
-You will be prompted for your Garmin email and password. Tokens are saved to `~/.garmin_tokens/` by default and refreshed automatically.
+I regsitered wlfdn.dev with cloudflared.
 
-## Claude Desktop configuration
+### 2. Set up Cloudflare Tunnel (one-time)
 
-Add to your `claude_desktop_config.json`:
+```shell
+winget install cloudflare.cloudflared
+cloudflared login
+cloudflared tunnel create fuel
+cloudflared tunnel route dns fuel fuel.wlfdn.dev
+```
+
+This creates `~/.cloudflared/fuel.json`. No ports need opening on your router.
+
+### 3. Configure API secret
+
+Edit `start.bat` and set `API_SECRET` to a long random string.
+Store the same value in GCP Secret Manager as `garmin-api-secret`.
+
+### 4. Start everything
+
+```shell
+start.bat
+```
+
+Or add to Task Scheduler: Action = `e:\code\garmin\start.bat`, trigger = at login.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Liveness check — no auth required |
+| GET | `/garmin/today` | Steps, active kcal, resting HR, body battery |
+| GET | `/garmin/activities` | Today's activities with kcal and duration |
+
+All endpoints except `/health` require header: `X-API-Secret: <your-secret>`
+
+## Response examples
+
+### GET /garmin/today
 
 ```json
 {
-  "mcpServers": {
-    "garmin": {
-      "command": "garmin-mcp-gt"
-    }
-  }
+  "date": "2026-05-31",
+  "active_kcal": 350,
+  "total_kcal": 2100,
+  "steps": 8200,
+  "distance_km": 6.4,
+  "active_minutes": 45,
+  "resting_hr_bpm": 53,
+  "body_battery": {"charged": 72, "drained": 18}
 }
 ```
 
-On macOS the config file is at:
-`~/Library/Application Support/Claude/claude_desktop_config.json`
-
-On Windows:
-`%APPDATA%\Claude\claude_desktop_config.json`
-
-### Custom token directory
+### GET /garmin/activities
 
 ```json
 {
-  "mcpServers": {
-    "garmin": {
-      "command": "garmin-mcp-gt",
-      "env": {
-        "GARMIN_TOKEN_DIR": "/path/to/tokens"
-      }
+  "date": "2026-05-31",
+  "activities": [
+    {
+      "name": "Morning ride",
+      "type": "road_biking",
+      "duration_min": 62,
+      "distance_km": 30.1,
+      "kcal": 850,
+      "avg_power_w": 188
     }
-  }
+  ],
+  "total_active_kcal": 850
 }
 ```
 
-## Environment variables
+## Graceful fallback
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GARMIN_TOKEN_DIR` | `~/.garmin_tokens/` | Directory where session tokens are stored |
-
-## License
-
-MIT
+If the sidecar is unreachable (desktop off, tunnel down), Cloud Run catches the
+connection error and proceeds with food-only balance calculation, noting
+"Activity data unavailable" in the recommendation.

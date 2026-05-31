@@ -41,7 +41,7 @@ def main() -> None:
 
     current = match.group(1)
     new = bump_version(current, part)
-    print(f"Bumping {current} → {new}")
+    print(f"Bumping {current} -> {new}")
 
     PYPROJECT.write_text(text.replace(f'version = "{current}"', f'version = "{new}"'))
 

@@ -6,7 +6,7 @@ Run `garmin-setup` once to authenticate and save session tokens.
 
 import os
 import stat
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from getpass import getpass
 from pathlib import Path
 from typing import Any
@@ -189,7 +189,20 @@ def get_sedentary_analysis(offset_days: int = 0) -> dict[str, Any]:
     if not readings:
         return {"date": d, "error": "No heart rate data available"}
 
-    interval_min = 1440 / len(readings)  # minutes per reading
+    if len(readings) >= 2:
+        # Use only short gaps (≤10 min) so device-off and cross-midnight gaps
+        # don't skew the median away from the true sampling interval.
+        short_gaps = sorted(
+            g
+            for g in (
+                (readings[i + 1][0] - readings[i][0]) / 60000
+                for i in range(len(readings) - 1)
+            )
+            if 0 < g <= 10
+        )
+        interval_min = short_gaps[len(short_gaps) // 2] if short_gaps else 1.0
+    else:
+        interval_min = 1.0
 
     light_threshold = resting + 20
     moderate_threshold = resting + 40
@@ -204,18 +217,19 @@ def get_sedentary_analysis(offset_days: int = 0) -> dict[str, Any]:
 
     # Derive UTC offset from the GMT vs local start timestamps
     try:
-        from datetime import datetime
-
         fmt = "%Y-%m-%dT%H:%M:%S"
         gmt_start = datetime.strptime(data["startTimestampGMT"], fmt)
         local_start = datetime.strptime(data["startTimestampLocal"], fmt)
-        tz_offset_ms = int((local_start - gmt_start).total_seconds()) * 1000
+        tz_offset = timedelta(seconds=(local_start - gmt_start).total_seconds())
+        local_tz = timezone(tz_offset)
     except Exception:
-        tz_offset_ms = 0
+        local_tz = timezone(timedelta(0))
 
     for ts_ms, bpm in readings:
-        local_ts = (ts_ms + tz_offset_ms) // 1000
-        hour = int(local_ts % 86400 // 3600)
+        local_dt = datetime.fromtimestamp(ts_ms / 1000, tz=local_tz)
+        if local_dt.date().isoformat() != d:
+            continue  # skip readings that belong to a different local date
+        hour = local_dt.hour
         hourly.setdefault(hour, []).append(bpm)
 
         if bpm <= light_threshold:
@@ -234,6 +248,12 @@ def get_sedentary_analysis(offset_days: int = 0) -> dict[str, Any]:
                 buckets["moderate"] += interval_min
             else:
                 buckets["active"] += interval_min
+
+    if not hourly:
+        return {"date": d, "error": "No heart rate data for this date"}
+
+    if in_sedentary and current_streak >= 10:
+        activity_breaks += 1
 
     return {
         "date": d,
