@@ -55,8 +55,12 @@ def _dedup(activities: list[dict]) -> list[dict]:
 
     out = []
     for candidates in buckets.values():
-        best = min(candidates, key=lambda a: TYPE_PREF.get(
-            a.get("activityType", {}).get("typeKey", ""), 99))
+        best = min(
+            candidates,
+            key=lambda a: TYPE_PREF.get(
+                a.get("activityType", {}).get("typeKey", ""), 99
+            ),
+        )
         out.append(best)
 
     out.sort(key=lambda a: a.get("startTimeLocal", ""), reverse=True)
@@ -128,7 +132,9 @@ def get_activity_detail(activity_id: str) -> dict[str, Any]:
         if _id <= 0:
             raise ValueError
     except (ValueError, TypeError):
-        raise ValueError(f"activity_id must be a positive integer, got: {activity_id!r}")
+        raise ValueError(
+            f"activity_id must be a positive integer, got: {activity_id!r}"
+        )
 
     c = client()
     detail = c.get_activity(activity_id)
@@ -144,7 +150,7 @@ def get_activity_detail(activity_id: str) -> dict[str, Any]:
         "max_power_w": summary.get("maxPower"),
         "normalized_power_w": summary.get("normPower"),
         "avg_cadence_rpm": summary.get("averageBikingCadenceInRevPerMinute")
-            or summary.get("averageRunningCadenceInStepsPerMinute"),
+        or summary.get("averageRunningCadenceInStepsPerMinute"),
         "elevation_gain_m": summary.get("elevationGain"),
         "calories": summary.get("calories"),
         "aerobic_training_effect": summary.get("aerobicTrainingEffect"),
@@ -176,16 +182,18 @@ def get_sedentary_analysis(offset_days: int = 0) -> dict[str, Any]:
     data = client().get_heart_rates(d)
 
     resting = data.get("restingHeartRate") or 60
-    readings = [(r[0], r[1]) for r in (data.get("heartRateValues") or []) if r[1] is not None]
+    readings = [
+        (r[0], r[1]) for r in (data.get("heartRateValues") or []) if r[1] is not None
+    ]
 
     if not readings:
         return {"date": d, "error": "No heart rate data available"}
 
     interval_min = 1440 / len(readings)  # minutes per reading
 
-    light_threshold    = resting + 20
+    light_threshold = resting + 20
     moderate_threshold = resting + 40
-    active_threshold   = resting + 60
+    active_threshold = resting + 60
 
     buckets = {"sedentary": 0.0, "light": 0.0, "moderate": 0.0, "active": 0.0}
     current_streak = 0.0
@@ -197,6 +205,7 @@ def get_sedentary_analysis(offset_days: int = 0) -> dict[str, Any]:
     # Derive UTC offset from the GMT vs local start timestamps
     try:
         from datetime import datetime
+
         fmt = "%Y-%m-%dT%H:%M:%S"
         gmt_start = datetime.strptime(data["startTimestampGMT"], fmt)
         local_start = datetime.strptime(data["startTimestampLocal"], fmt)
@@ -238,8 +247,7 @@ def get_sedentary_analysis(offset_days: int = 0) -> dict[str, Any]:
         "longest_sedentary_streak_min": round(max_streak),
         "activity_breaks_count": activity_breaks,
         "hourly_avg_bpm": {
-            f"{h:02d}:00": round(sum(v) / len(v))
-            for h, v in sorted(hourly.items())
+            f"{h:02d}:00": round(sum(v) / len(v)) for h, v in sorted(hourly.items())
         },
     }
 
@@ -289,15 +297,17 @@ def get_hrv(days: int = 7) -> list[dict[str, Any]]:
         if not summary:
             continue
         baseline = summary.get("baseline", {})
-        results.append({
-            "date": d,
-            "last_night_avg": summary.get("lastNightAvg"),
-            "last_night_5min_high": summary.get("lastNight5MinHigh"),
-            "weekly_avg": summary.get("weeklyAvg"),
-            "status": summary.get("status"),
-            "baseline_low": baseline.get("balancedLow"),
-            "baseline_high": baseline.get("balancedUpper"),
-        })
+        results.append(
+            {
+                "date": d,
+                "last_night_avg": summary.get("lastNightAvg"),
+                "last_night_5min_high": summary.get("lastNight5MinHigh"),
+                "weekly_avg": summary.get("weeklyAvg"),
+                "status": summary.get("status"),
+                "baseline_low": baseline.get("balancedLow"),
+                "baseline_high": baseline.get("balancedUpper"),
+            }
+        )
     return results
 
 
@@ -315,25 +325,33 @@ def get_weekly_trends(weeks: int = 8) -> list[dict[str, Any]]:
     for w in range(weeks - 1, -1, -1):
         week_start = today - timedelta(days=today.weekday() + w * 7)
         week_end = week_start + timedelta(days=6)
-        acts = _dedup(c.get_activities_by_date(
-            week_start.isoformat(), week_end.isoformat()
-        ))
+        acts = _dedup(
+            c.get_activities_by_date(week_start.isoformat(), week_end.isoformat())
+        )
         rides = [
-            a for a in acts
+            a
+            for a in acts
             if "cycling" in a.get("activityType", {}).get("typeKey", "").lower()
             or "biking" in a.get("activityType", {}).get("typeKey", "").lower()
         ]
-        results.append({
-            "week_start": week_start.isoformat(),
-            "week_end": week_end.isoformat(),
-            "ride_count": len(rides),
-            "total_km": round(sum(a.get("distance", 0) for a in rides) / 1000, 1),
-            "total_hours": round(sum(a.get("duration", 0) for a in rides) / 3600, 1),
-            "avg_power_w": round(
-                sum(a.get("avgPower", 0) or 0 for a in rides if a.get("avgPower")) /
-                max(sum(1 for a in rides if a.get("avgPower")), 1), 1
-            ) if any(a.get("avgPower") for a in rides) else None,
-        })
+        results.append(
+            {
+                "week_start": week_start.isoformat(),
+                "week_end": week_end.isoformat(),
+                "ride_count": len(rides),
+                "total_km": round(sum(a.get("distance", 0) for a in rides) / 1000, 1),
+                "total_hours": round(
+                    sum(a.get("duration", 0) for a in rides) / 3600, 1
+                ),
+                "avg_power_w": round(
+                    sum(a.get("avgPower", 0) or 0 for a in rides if a.get("avgPower"))
+                    / max(sum(1 for a in rides if a.get("avgPower")), 1),
+                    1,
+                )
+                if any(a.get("avgPower") for a in rides)
+                else None,
+            }
+        )
     return results
 
 
@@ -352,22 +370,26 @@ def get_weight(days: int = 30) -> list[dict[str, Any]]:
     data = client().get_weigh_ins(start, today.isoformat())
 
     results = []
-    for s in sorted(data.get("dailyWeightSummaries") or [], key=lambda x: x.get("summaryDate", "")):
+    for s in sorted(
+        data.get("dailyWeightSummaries") or [], key=lambda x: x.get("summaryDate", "")
+    ):
         w = s.get("latestWeight", {})
-        weight_g  = w.get("weight")
-        muscle_g  = w.get("muscleMass")
-        bone_g    = w.get("boneMass")
-        delta_g   = w.get("weightDelta")
-        results.append({
-            "date":            s.get("summaryDate"),
-            "weight_kg":       round(weight_g / 1000, 2) if weight_g else None,
-            "bmi":             round(w.get("bmi"), 1) if w.get("bmi") else None,
-            "body_fat_pct":    w.get("bodyFat"),
-            "body_water_pct":  w.get("bodyWater"),
-            "muscle_mass_kg":  round(muscle_g / 1000, 2) if muscle_g else None,
-            "bone_mass_kg":    round(bone_g / 1000, 2) if bone_g else None,
-            "change_kg":       round(delta_g / 1000, 3) if delta_g else None,
-        })
+        weight_g = w.get("weight")
+        muscle_g = w.get("muscleMass")
+        bone_g = w.get("boneMass")
+        delta_g = w.get("weightDelta")
+        results.append(
+            {
+                "date": s.get("summaryDate"),
+                "weight_kg": round(weight_g / 1000, 2) if weight_g else None,
+                "bmi": round(w.get("bmi"), 1) if w.get("bmi") else None,
+                "body_fat_pct": w.get("bodyFat"),
+                "body_water_pct": w.get("bodyWater"),
+                "muscle_mass_kg": round(muscle_g / 1000, 2) if muscle_g else None,
+                "bone_mass_kg": round(bone_g / 1000, 2) if bone_g else None,
+                "change_kg": round(delta_g / 1000, 3) if delta_g else None,
+            }
+        )
     return results
 
 
@@ -388,21 +410,21 @@ def get_weight_trend(weeks: int = 12) -> list[dict[str, Any]]:
 
     # Build a lookup of date -> metrics
     by_date: dict[str, dict] = {}
-    for s in (data.get("dailyWeightSummaries") or []):
+    for s in data.get("dailyWeightSummaries") or []:
         w = s.get("latestWeight", {})
         weight_g = w.get("weight")
-        fat_pct  = w.get("bodyFat")
+        fat_pct = w.get("bodyFat")
         muscle_g = w.get("muscleMass")
         if weight_g:
             by_date[s["summaryDate"]] = {
-                "weight_kg":      weight_g / 1000,
-                "body_fat_pct":   fat_pct if fat_pct else None,
+                "weight_kg": weight_g / 1000,
+                "body_fat_pct": fat_pct if fat_pct else None,
                 "muscle_mass_kg": muscle_g / 1000 if muscle_g else None,
             }
 
     results = []
     for w in range(weeks - 1, -1, -1):
-        week_end   = today - timedelta(days=w * 7)
+        week_end = today - timedelta(days=w * 7)
         week_start = week_end - timedelta(days=6)
 
         readings = [
@@ -414,20 +436,24 @@ def get_weight_trend(weeks: int = 12) -> list[dict[str, Any]]:
         if not readings:
             continue
 
-        weights  = [r["weight_kg"] for r in readings]
-        fats     = [r["body_fat_pct"] for r in readings if r["body_fat_pct"]]
-        muscles  = [r["muscle_mass_kg"] for r in readings if r["muscle_mass_kg"]]
+        weights = [r["weight_kg"] for r in readings]
+        fats = [r["body_fat_pct"] for r in readings if r["body_fat_pct"]]
+        muscles = [r["muscle_mass_kg"] for r in readings if r["muscle_mass_kg"]]
 
-        results.append({
-            "week_start":          week_start.isoformat(),
-            "week_end":            week_end.isoformat(),
-            "readings":            len(readings),
-            "avg_weight_kg":       round(sum(weights) / len(weights), 2),
-            "min_weight_kg":       round(min(weights), 2),
-            "max_weight_kg":       round(max(weights), 2),
-            "avg_body_fat_pct":    round(sum(fats) / len(fats), 1) if fats else None,
-            "avg_muscle_mass_kg":  round(sum(muscles) / len(muscles), 2) if muscles else None,
-        })
+        results.append(
+            {
+                "week_start": week_start.isoformat(),
+                "week_end": week_end.isoformat(),
+                "readings": len(readings),
+                "avg_weight_kg": round(sum(weights) / len(weights), 2),
+                "min_weight_kg": round(min(weights), 2),
+                "max_weight_kg": round(max(weights), 2),
+                "avg_body_fat_pct": round(sum(fats) / len(fats), 1) if fats else None,
+                "avg_muscle_mass_kg": round(sum(muscles) / len(muscles), 2)
+                if muscles
+                else None,
+            }
+        )
 
     # Add week-on-week change
     for i in range(1, len(results)):
