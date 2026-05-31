@@ -161,6 +161,90 @@ def get_activity_detail(activity_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def get_sedentary_analysis(offset_days: int = 0) -> dict[str, Any]:
+    """Analyse how sedentary a day was based on heart rate patterns.
+
+    Classifies the day into sedentary, light, moderate, and active time using
+    resting HR as the baseline. Also reports longest sedentary streak and an
+    hourly average HR breakdown.
+
+    Args:
+        offset_days: 0 = today, 1 = yesterday, etc. (max 30).
+    """
+    offset_days = max(0, min(offset_days, 30))
+    d = (date.today() - timedelta(days=offset_days)).isoformat()
+    data = client().get_heart_rates(d)
+
+    resting = data.get("restingHeartRate") or 60
+    readings = [(r[0], r[1]) for r in (data.get("heartRateValues") or []) if r[1] is not None]
+
+    if not readings:
+        return {"date": d, "error": "No heart rate data available"}
+
+    interval_min = 1440 / len(readings)  # minutes per reading
+
+    light_threshold    = resting + 20
+    moderate_threshold = resting + 40
+    active_threshold   = resting + 60
+
+    buckets = {"sedentary": 0.0, "light": 0.0, "moderate": 0.0, "active": 0.0}
+    current_streak = 0.0
+    max_streak = 0.0
+    activity_breaks = 0
+    in_sedentary = False
+    hourly: dict[int, list[int]] = {}
+
+    # Derive UTC offset from the GMT vs local start timestamps
+    try:
+        from datetime import datetime
+        fmt = "%Y-%m-%dT%H:%M:%S"
+        gmt_start = datetime.strptime(data["startTimestampGMT"], fmt)
+        local_start = datetime.strptime(data["startTimestampLocal"], fmt)
+        tz_offset_ms = int((local_start - gmt_start).total_seconds()) * 1000
+    except Exception:
+        tz_offset_ms = 0
+
+    for ts_ms, bpm in readings:
+        local_ts = (ts_ms + tz_offset_ms) // 1000
+        hour = int(local_ts % 86400 // 3600)
+        hourly.setdefault(hour, []).append(bpm)
+
+        if bpm <= light_threshold:
+            buckets["sedentary"] += interval_min
+            current_streak += interval_min
+            max_streak = max(max_streak, current_streak)
+            in_sedentary = True
+        else:
+            if in_sedentary and current_streak >= 10:
+                activity_breaks += 1
+            current_streak = 0.0
+            in_sedentary = False
+            if bpm <= moderate_threshold:
+                buckets["light"] += interval_min
+            elif bpm <= active_threshold:
+                buckets["moderate"] += interval_min
+            else:
+                buckets["active"] += interval_min
+
+    return {
+        "date": d,
+        "resting_hr_bpm": resting,
+        "thresholds_bpm": {
+            "sedentary_up_to": light_threshold,
+            "light_up_to": moderate_threshold,
+            "moderate_up_to": active_threshold,
+        },
+        "time_hours": {k: round(v / 60, 1) for k, v in buckets.items()},
+        "longest_sedentary_streak_min": round(max_streak),
+        "activity_breaks_count": activity_breaks,
+        "hourly_avg_bpm": {
+            f"{h:02d}:00": round(sum(v) / len(v))
+            for h, v in sorted(hourly.items())
+        },
+    }
+
+
+@mcp.tool()
 def get_sleep(offset_days: int = 0) -> dict[str, Any]:
     """Return sleep data for a given night.
 
