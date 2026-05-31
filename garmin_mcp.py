@@ -371,6 +371,73 @@ def get_weight(days: int = 30) -> list[dict[str, Any]]:
     return results
 
 
+@mcp.tool()
+def get_weight_trend(weeks: int = 12) -> list[dict[str, Any]]:
+    """Return weekly weight trend using 7-day rolling averages to smooth daily fluctuations.
+
+    Useful for tracking fat loss progress without being misled by hydration noise.
+
+    Args:
+        weeks: Number of weeks to look back (default 12, max 52).
+    """
+    weeks = max(1, min(weeks, 52))
+    today = date.today()
+    # Fetch extra days so the first week has enough readings to average
+    start = (today - timedelta(days=weeks * 7 + 7)).isoformat()
+    data = client().get_weigh_ins(start, today.isoformat())
+
+    # Build a lookup of date -> metrics
+    by_date: dict[str, dict] = {}
+    for s in (data.get("dailyWeightSummaries") or []):
+        w = s.get("latestWeight", {})
+        weight_g = w.get("weight")
+        fat_pct  = w.get("bodyFat")
+        muscle_g = w.get("muscleMass")
+        if weight_g:
+            by_date[s["summaryDate"]] = {
+                "weight_kg":      weight_g / 1000,
+                "body_fat_pct":   fat_pct if fat_pct else None,
+                "muscle_mass_kg": muscle_g / 1000 if muscle_g else None,
+            }
+
+    results = []
+    for w in range(weeks - 1, -1, -1):
+        week_end   = today - timedelta(days=w * 7)
+        week_start = week_end - timedelta(days=6)
+
+        readings = [
+            by_date[str(week_start + timedelta(days=d))]
+            for d in range(7)
+            if str(week_start + timedelta(days=d)) in by_date
+        ]
+
+        if not readings:
+            continue
+
+        weights  = [r["weight_kg"] for r in readings]
+        fats     = [r["body_fat_pct"] for r in readings if r["body_fat_pct"]]
+        muscles  = [r["muscle_mass_kg"] for r in readings if r["muscle_mass_kg"]]
+
+        results.append({
+            "week_start":          week_start.isoformat(),
+            "week_end":            week_end.isoformat(),
+            "readings":            len(readings),
+            "avg_weight_kg":       round(sum(weights) / len(weights), 2),
+            "min_weight_kg":       round(min(weights), 2),
+            "max_weight_kg":       round(max(weights), 2),
+            "avg_body_fat_pct":    round(sum(fats) / len(fats), 1) if fats else None,
+            "avg_muscle_mass_kg":  round(sum(muscles) / len(muscles), 2) if muscles else None,
+        })
+
+    # Add week-on-week change
+    for i in range(1, len(results)):
+        results[i]["change_from_prev_week_kg"] = round(
+            results[i]["avg_weight_kg"] - results[i - 1]["avg_weight_kg"], 2
+        )
+
+    return results
+
+
 def _setup() -> None:
     """CLI entry point for initial authentication (`garmin-setup`)."""
     token_path = Path(TOKEN_DIR)
