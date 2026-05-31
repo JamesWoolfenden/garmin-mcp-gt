@@ -17,7 +17,7 @@ foreach ($line in Get-Content $envFile) {
 $env:PORT = "8080"
 
 Write-Host "[fuel] Starting Garmin sidecar..."
-Start-Process powershell -ArgumentList "-NoExit -Command `"cd E:\Code\garmin; foreach (`$line in Get-Content backend\.env.local) { if (`$line -match '^([^#][^=]+)=(.*)$') { Set-Item env:`$Matches[1].Trim() `$Matches[2].Trim() } }; `$env:PORT='8080'; python server.py`"" -WindowStyle Normal
+Start-Process powershell -ArgumentList "-NoExit -Command `"cd E:\Code\garmin; python server.py`"" -WindowStyle Normal
 
 Start-Sleep 3
 
