@@ -21,16 +21,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
+        run: uv sync --extra dev
 
       - name: Lint
-        run: ruff check garmin_mcp.py
+        run: uv run ruff check garmin_mcp.py
 
       - name: Format check
-        run: ruff format --check garmin_mcp.py
+        run: uv run ruff format --check garmin_mcp.py
 
       - name: Check package builds
         run: uv build
 
       - name: Verify entry points importable
-        run: python -c "from garmin_mcp import main, _setup"
+        run: uv run python -c "from garmin_mcp import main, _setup"
