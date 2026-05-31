@@ -337,6 +337,40 @@ def get_weekly_trends(weeks: int = 8) -> list[dict[str, Any]]:
     return results
 
 
+@mcp.tool()
+def get_weight(days: int = 30) -> list[dict[str, Any]]:
+    """Return weigh-in history from Garmin Index scale for the last N days.
+
+    Includes weight, BMI, body fat %, body water %, muscle mass, and daily change.
+
+    Args:
+        days: Number of days to look back (default 30, max 365).
+    """
+    days = max(1, min(days, 365))
+    today = date.today()
+    start = (today - timedelta(days=days)).isoformat()
+    data = client().get_weigh_ins(start, today.isoformat())
+
+    results = []
+    for s in sorted(data.get("dailyWeightSummaries") or [], key=lambda x: x.get("summaryDate", "")):
+        w = s.get("latestWeight", {})
+        weight_g  = w.get("weight")
+        muscle_g  = w.get("muscleMass")
+        bone_g    = w.get("boneMass")
+        delta_g   = w.get("weightDelta")
+        results.append({
+            "date":            s.get("summaryDate"),
+            "weight_kg":       round(weight_g / 1000, 2) if weight_g else None,
+            "bmi":             round(w.get("bmi"), 1) if w.get("bmi") else None,
+            "body_fat_pct":    w.get("bodyFat"),
+            "body_water_pct":  w.get("bodyWater"),
+            "muscle_mass_kg":  round(muscle_g / 1000, 2) if muscle_g else None,
+            "bone_mass_kg":    round(bone_g / 1000, 2) if bone_g else None,
+            "change_kg":       round(delta_g / 1000, 3) if delta_g else None,
+        })
+    return results
+
+
 def _setup() -> None:
     """CLI entry point for initial authentication (`garmin-setup`)."""
     token_path = Path(TOKEN_DIR)
