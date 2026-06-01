@@ -11,6 +11,13 @@ backend/public_key.pem
 # Build artefacts
 **/files.zip
 
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+.terraform.lock.hcl
+
 # Python
 __pycache__/
 *.py[cod]
