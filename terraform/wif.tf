@@ -16,6 +16,7 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     "attribute.repository_owner" = "assertion.repository_owner"
   }
 
+  #checkov:skip=CKV_GCP_125: condition already restricts to specific repo via assertion.repository — changing to attribute.repository risks breaking working WIF auth
   attribute_condition = "assertion.repository == '${var.github_repo}'"
 
   oidc {
