@@ -33,4 +33,8 @@ resource "google_cloud_scheduler_job" "nudge" {
   }
 
   depends_on = [google_cloud_run_v2_service_iam_member.scheduler_invoker]
+
+  lifecycle {
+    ignore_changes = [http_target[0].headers]
+  }
 }

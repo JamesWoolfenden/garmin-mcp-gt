@@ -75,8 +75,11 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
   }
 
   lifecycle {
-    # Image tag is managed by CI — prevent Terraform from reverting deploys
-    ignore_changes = [template[0].containers[0].image]
+    ignore_changes = [
+      template[0].containers[0].image, # managed by CI
+      client,                           # set by gcloud, not Terraform
+      client_version,
+    ]
   }
 
   depends_on = [
