@@ -67,3 +67,13 @@ import {
   id = "projects/pike-477416/locations/europe-west1/jobs/fuel-nudge-20h"
   to = google_cloud_scheduler_job.nudge["20"]
 }
+
+import {
+  id = "projects/pike-477416/serviceAccounts/github-actions-terraform@pike-477416.iam.gserviceaccount.com"
+  to = google_service_account.terraform
+}
+
+import {
+  id = "terraform-pike-bucket-tfstate roles/storage.objectAdmin serviceAccount:github-actions-terraform@pike-477416.iam.gserviceaccount.com"
+  to = google_storage_bucket_iam_member.terraform_state
+}
