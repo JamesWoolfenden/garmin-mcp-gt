@@ -26,6 +26,7 @@ $roleBody = @{
     "datastore.databases.get", "datastore.databases.getMetadata",
     "datastore.databases.update", "datastore.operations.get",
     "iam.roles.create", "iam.roles.delete", "iam.roles.get", "iam.roles.update",
+    "iam.serviceAccounts.actAs",
     "iam.serviceAccounts.create", "iam.serviceAccounts.delete",
     "iam.serviceAccounts.get", "iam.serviceAccounts.getIamPolicy",
     "iam.serviceAccounts.setIamPolicy", "iam.serviceAccounts.update",
