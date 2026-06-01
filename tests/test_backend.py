@@ -100,3 +100,34 @@ def test_health(client):
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+# ── nudge timing ──────────────────────────────────────────────────────────────
+
+
+class TestNudgeTiming:
+    def setup_method(self):
+        self.mock_client = MagicMock()
+        m.ANTHROPIC_CLIENT = self.mock_client
+        self.mock_client.messages.create.return_value = _make_message(
+            '{"status": "under", "recommendation": "Go for a walk."}'
+        )
+
+    def _get_system_prompt(self, time_of_day: str) -> str:
+        m.claude_recommend(0, 0, 2000, [], time_of_day)
+        call_args = self.mock_client.messages.create.call_args
+        return call_args.kwargs.get(
+            "system", call_args.args[0] if call_args.args else ""
+        )
+
+    def test_morning_includes_activity_guidance(self):
+        prompt = self._get_system_prompt("08:00")
+        assert "plenty of time" in prompt
+
+    def test_afternoon_includes_limited_guidance(self):
+        prompt = self._get_system_prompt("14:00")
+        assert "still time" in prompt
+
+    def test_evening_drops_activity_guidance(self):
+        prompt = self._get_system_prompt("19:00")
+        assert "too late" in prompt

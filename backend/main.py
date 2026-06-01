@@ -123,6 +123,16 @@ def claude_recommend(
         or "none recorded"
     )
 
+    hour = int(time_of_day.split(":")[0])
+    if hour >= 17:
+        activity_guidance = "It is too late to meaningfully change activity today — focus advice on food only."
+    elif hour >= 13:
+        activity_guidance = "There is still time for a short walk or evening session if activity is low."
+    else:
+        activity_guidance = (
+            "There is plenty of time to act on both food and activity today."
+        )
+
     msg = ANTHROPIC_CLIENT.messages.create(
         model="claude-sonnet-4-5",
         max_tokens=150,
@@ -130,6 +140,7 @@ def claude_recommend(
             "You are a concise fitness and nutrition advisor. "
             "Given calorie intake, calories burned from activity, daily target, "
             "activities done today, and time of day, produce a short recommendation. "
+            f"{activity_guidance} "
             'Return ONLY valid JSON: {"status": "on_track"|"over"|"under", "recommendation": string}. '
             "Recommendation must be 1-2 sentences max, practical, not preachy. "
             "No markdown, no preamble."
