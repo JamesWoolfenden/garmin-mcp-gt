@@ -29,6 +29,10 @@ vi.mock("../lib/api", () => ({
     status: "on_track",
     recommendation: "Looking good.",
   }),
+  getProfile: vi.fn().mockResolvedValue({ kcal_target: 2000, nudge_times: ["08:00", "13:00"] }),
+  updateProfile: vi.fn().mockResolvedValue({}),
+  sendChat: vi.fn(),
+  createGarminUploadToken: vi.fn().mockResolvedValue({ token: "test-token" }),
   subscribePush: vi.fn(),
   unsubscribePush: vi.fn(),
 }));

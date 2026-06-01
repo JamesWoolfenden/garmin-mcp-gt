@@ -34,6 +34,14 @@ resource "google_project_iam_member" "backend_secret_access" {
   member  = "serviceAccount:${google_service_account.fuel_backend.email}"
 }
 
+# Retained during SA transition — compute SA may still serve traffic on old
+# revisions while Cloud Run migrates to fuel-backend SA. Remove once confirmed.
+resource "google_project_iam_member" "compute_secret_access" {
+  project = var.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${local.compute_sa}"
+}
+
 resource "google_cloud_run_v2_service_iam_member" "scheduler_invoker" {
   project  = var.project_id
   location = var.region

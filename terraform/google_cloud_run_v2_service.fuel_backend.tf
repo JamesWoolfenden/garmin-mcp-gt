@@ -96,5 +96,6 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
     google_secret_manager_secret.garmin_api_secret,
     google_secret_manager_secret.vapid_private_key,
     google_secret_manager_secret.internal_secret,
+    time_sleep.iam_propagation,
   ]
 }
