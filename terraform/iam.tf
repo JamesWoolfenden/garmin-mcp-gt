@@ -36,6 +36,7 @@ resource "google_project_iam_member" "backend_secret_access" {
 
 # Retained during SA transition — compute SA may still serve traffic on old
 # revisions while Cloud Run migrates to fuel-backend SA. Remove once confirmed.
+#checkov:skip=CKV_GCP_46: Transitional binding — remove after fuel-backend SA is confirmed serving all traffic
 resource "google_project_iam_member" "compute_secret_access" {
   project = var.project_id
   role    = "roles/secretmanager.secretAccessor"
