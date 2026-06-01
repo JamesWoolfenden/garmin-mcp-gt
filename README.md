@@ -1,96 +1,105 @@
-# garmin-sidecar
+# Fuel
 
-Thin FastAPI HTTP wrapper over garmin-mcp-gt. Exposes two endpoints for
-the Fuel Cloud Run backend to call via Cloudflare Tunnel.
+A calorie and activity tracker for cyclists, powered by Claude and Garmin Connect.
 
-## Setup
+Log food in plain English, get a calorie balance against your activity, and ask questions about your fitness data — all from a mobile-friendly web app.
 
-### 1. Install dependencies
+## Features
 
-```shell
-pip install fastapi uvicorn garmin-mcp-gt
+- **Food logging** — describe what you ate in plain English; Claude estimates the calories
+- **Activity balance** — live calorie in vs. burned, updated from Garmin
+- **Conversational health advisor** — ask "how were my steps today?" or "how did I sleep last night?" and get answers using your real Garmin data
+- **Push nudges** — scheduled notifications with time-aware advice (morning vs. evening)
+- **Multi-user** — each user has their own data, secured with Firebase Auth
+
+## Using the app
+
+The hosted app is at **https://pike-477416.web.app**
+
+1. Sign in with Google or create an email/password account
+2. Log food in the text box ("had porridge and a coffee")
+3. Connect Garmin to enable activity data and the Ask tab (see below)
+4. Tap **Ask** to chat with Claude about your health data
+
+## Connecting Garmin
+
+Garmin uses session tokens that must be generated on your own machine (there is no public OAuth API). Setup takes about two minutes:
+
+### 1. Install the CLI
+
+```bash
+pip install garmin-mcp-gt
 ```
 
-Authenticate Garmin once (if not already done):
+### 2. Authenticate with Garmin
 
-```shell
+```bash
 garmin-setup
 ```
 
-I regsitered wlfdn.dev with cloudflared.
+Enter your Garmin Connect email and password when prompted. Tokens are saved to `~/.garmin_tokens/`.
 
-### 2. Set up Cloudflare Tunnel (one-time)
+### 3. Generate an upload token in the app
 
-```shell
-winget install cloudflare.cloudflared
-cloudflared login
-cloudflared tunnel create fuel
-cloudflared tunnel route dns fuel fuel.wlfdn.dev
+In the Fuel app, scroll to the bottom of the **Log** tab and tap **Connect Garmin**. This generates a 15-minute upload token.
+
+### 4. Upload your tokens
+
+```bash
+garmin-upload-tokens --token "paste-token-here"
 ```
 
-This creates `~/.cloudflared/fuel.json`. No ports need opening on your router.
+That's it. Your Garmin data is now available in the app and the Ask tab will use it.
 
-### 3. Configure API secret
+**Tokens expire** periodically (weeks to months). Re-run `garmin-setup` then `garmin-upload-tokens` when needed.
 
-Edit `start.bat` and set `API_SECRET` to a long random string.
-Store the same value in GCP Secret Manager as `garmin-api-secret`.
+## Using with Claude Code / Claude Desktop
 
-### 4. Start everything
-
-```shell
-start.bat
-```
-
-Or add to Task Scheduler: Action = `e:\code\garmin\start.bat`, trigger = at login.
-
-## Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Liveness check — no auth required |
-| GET | `/garmin/today` | Steps, active kcal, resting HR, body battery |
-| GET | `/garmin/activities` | Today's activities with kcal and duration |
-
-All endpoints except `/health` require header: `X-API-Secret: <your-secret>`
-
-## Response examples
-
-### GET /garmin/today
+`garmin-mcp-gt` is also an MCP server for use in Claude Code sessions. After `pip install garmin-mcp-gt` and `garmin-setup`, add to `~/.claude/settings.json`:
 
 ```json
 {
-  "date": "2026-05-31",
-  "active_kcal": 350,
-  "total_kcal": 2100,
-  "steps": 8200,
-  "distance_km": 6.4,
-  "active_minutes": 45,
-  "resting_hr_bpm": 53,
-  "body_battery": {"charged": 72, "drained": 18}
-}
-```
-
-### GET /garmin/activities
-
-```json
-{
-  "date": "2026-05-31",
-  "activities": [
-    {
-      "name": "Morning ride",
-      "type": "road_biking",
-      "duration_min": 62,
-      "distance_km": 30.1,
-      "kcal": 850,
-      "avg_power_w": 188
+  "mcpServers": {
+    "garmin": {
+      "command": "garmin-mcp-gt"
     }
-  ],
-  "total_active_kcal": 850
+  }
 }
 ```
 
-## Graceful fallback
+Then ask Claude things like "am I sedentary today?" or "how does my sleep affect my training load?".
 
-If the sidecar is unreachable (desktop off, tunnel down), Cloud Run catches the
-connection error and proceeds with food-only balance calculation, noting
-"Activity data unavailable" in the recommendation.
+## Architecture
+
+- **Frontend** — React PWA, hosted on Firebase Hosting
+- **Backend** — FastAPI on Cloud Run (europe-west1)
+- **Database** — SQLite with Litestream replication to GCS (zero managed DB cost)
+- **Garmin tokens** — encrypted at rest with Cloud KMS, per-user in SQLite
+- **Auth** — Firebase Auth (Google Sign-In + email/password)
+- **AI** — Claude API (food parsing, recommendations, conversational tools)
+
+## Self-hosting
+
+The backend is a standard Cloud Run service. To deploy your own instance:
+
+1. Fork this repo
+2. Create a GCP project and enable the required APIs
+3. Run `backend/setup-wif.ps1` to configure GitHub Actions auth
+4. Run `backend/setup-secrets.ps1` to store your secrets
+5. Add GitHub Actions secrets (see `backend/setup-wif.ps1` output)
+6. Push to main — CI deploys everything automatically
+
+Infrastructure is managed with OpenTofu — see `terraform/`.
+
+## Development
+
+```bash
+# Python tests
+python -m pytest
+
+# Frontend tests
+cd ui && npm test
+
+# Run backend locally
+DB_PATH=./dev.db uvicorn backend.main:app --reload
+```
