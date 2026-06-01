@@ -133,3 +133,23 @@ class TestNudgeTiming:
     def test_evening_drops_activity_guidance(self):
         prompt = self._get_system_prompt("19:00")
         assert "too late" in prompt
+
+    def test_wellness_context_included_when_provided(self):
+        m.claude_recommend(
+            0,
+            0,
+            2000,
+            [],
+            "08:00",
+            {
+                "sleep_score": 72,
+                "sleep_duration_h": 7.2,
+                "hrv_last_night": 58,
+                "weight_trend_7d_kg": -0.3,
+            },
+        )
+        call_args = self.mock_client.messages.create.call_args
+        prompt = call_args.kwargs.get("system", "")
+        assert "sleep score 72" in prompt
+        assert "HRV 58ms" in prompt
+        assert "weight trending down" in prompt

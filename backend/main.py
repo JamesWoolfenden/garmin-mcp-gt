@@ -175,12 +175,63 @@ def claude_parse_food(text: str) -> dict[str, Any]:
     return json.loads(raw)
 
 
+def _garmin_wellness(uid: str) -> dict[str, Any]:
+    """Fetch sleep, HRV, and weight trend for richer recommendations. Fails silently."""
+    result: dict[str, Any] = {}
+    try:
+        with GarminSession(uid) as g:
+            import garmin_mcp as gm
+
+            today = date.today().isoformat()
+
+            # Last night's sleep
+            try:
+                sleep = g.get_sleep_data(today)
+                daily = sleep.get("dailySleepDTO", {})
+                score = daily.get("sleepScores", {}).get("overall", {}).get("value")
+                if score:
+                    result["sleep_score"] = score
+                    result["sleep_duration_h"] = round(
+                        (daily.get("sleepTimeSeconds") or 0) / 3600, 1
+                    )
+            except Exception:
+                pass
+
+            # Latest HRV
+            try:
+                hrv = g.get_hrv_data(today)
+                hrv_val = (hrv or {}).get("hrvSummary", {}).get("lastNight")
+                if hrv_val:
+                    result["hrv_last_night"] = hrv_val
+            except Exception:
+                pass
+
+            # Weight trend (last 7 days)
+            try:
+                trend = (
+                    gm.get_weight_trend.__wrapped__()
+                    if hasattr(gm.get_weight_trend, "__wrapped__")
+                    else None
+                )
+                if trend and len(trend) >= 2:
+                    delta = trend[-1].get("avg_weight_kg", 0) - trend[0].get(
+                        "avg_weight_kg", 0
+                    )
+                    result["weight_trend_7d_kg"] = round(delta, 2)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return result
+
+
 def claude_recommend(
     kcal_in: int,
     kcal_burned: int,
     kcal_target: int,
     activities: list[dict],
     time_of_day: str,
+    wellness: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask Claude to produce a balance recommendation."""
     act_str = (
@@ -198,14 +249,31 @@ def claude_recommend(
             "There is plenty of time to act on both food and activity today."
         )
 
+    wellness_str = ""
+    if wellness:
+        parts = []
+        if "sleep_score" in wellness:
+            parts.append(
+                f"sleep score {wellness['sleep_score']}/100 ({wellness.get('sleep_duration_h', '?')}h)"
+            )
+        if "hrv_last_night" in wellness:
+            parts.append(f"HRV {wellness['hrv_last_night']}ms")
+        if "weight_trend_7d_kg" in wellness:
+            direction = "up" if wellness["weight_trend_7d_kg"] > 0 else "down"
+            parts.append(
+                f"weight trending {direction} {abs(wellness['weight_trend_7d_kg'])}kg this week"
+            )
+        if parts:
+            wellness_str = f" Recovery context: {', '.join(parts)}."
+
     msg = ANTHROPIC_CLIENT.messages.create(
         model="claude-sonnet-4-5",
         max_tokens=150,
         system=(
-            "You are a concise fitness and nutrition advisor. "
-            "Given calorie intake, calories burned from activity, daily target, "
-            "activities done today, and time of day, produce a short recommendation. "
-            f"{activity_guidance} "
+            "You are a concise fitness and nutrition advisor for a cyclist. "
+            "Given calorie intake, calories burned, daily target, activities, time of day, "
+            "and recovery context (sleep, HRV, weight trend), produce a short personalised recommendation. "
+            f"{activity_guidance}{wellness_str} "
             'Return ONLY valid JSON: {"status": "on_track"|"over"|"under", "recommendation": string}. '
             "Recommendation must be 1-2 sentences max, practical, not preachy. "
             "No markdown, no preamble."
@@ -302,9 +370,27 @@ async def _compute_balance(uid: str) -> dict:
     profile = get_profile(uid)
     kcal_target = profile["kcal_target"]
 
-    garmin = await fetch_garmin(uid)
-    activities = await fetch_garmin_activities(uid)
+    # Fetch Garmin data and wellness context in parallel
+    import asyncio
+
+    garmin, activities, wellness = await asyncio.gather(
+        fetch_garmin(uid),
+        fetch_garmin_activities(uid),
+        run_in_threadpool(_garmin_wellness, uid),
+        return_exceptions=True,
+    )
+    if isinstance(garmin, Exception):
+        garmin = None
+    if isinstance(activities, Exception):
+        activities = None
+    if isinstance(wellness, Exception):
+        wellness = {}
+
     kcal_burned = garmin["active_kcal"] if garmin else 0
+
+    # Augment body battery from today stats into wellness context
+    if garmin and garmin.get("body_battery"):
+        wellness["body_battery_charged"] = garmin["body_battery"].get("charged")
 
     if garmin and not activities:
         activities = [
@@ -329,6 +415,7 @@ async def _compute_balance(uid: str) -> dict:
             kcal_target,
             activities or [],
             time_of_day,
+            wellness or {},
         )
     except Exception:
         net = kcal_in - kcal_burned
