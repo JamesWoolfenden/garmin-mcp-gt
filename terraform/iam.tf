@@ -42,7 +42,7 @@ resource "google_project_iam_member" "terraform_roles" {
 
 resource "google_storage_bucket_iam_member" "terraform_state" {
   bucket = "terraform-pike-bucket-tfstate"
-  role   = "roles/storage.objectAdmin"
+  role   = "roles/storage.admin"
   member = "serviceAccount:${local.terraform_sa}"
 }
 
