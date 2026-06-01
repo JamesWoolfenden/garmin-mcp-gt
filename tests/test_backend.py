@@ -122,34 +122,40 @@ class TestNudgeTiming:
             "system", call_args.args[0] if call_args.args else ""
         )
 
-    def test_morning_includes_activity_guidance(self):
-        prompt = self._get_system_prompt("08:00")
-        assert "plenty of time" in prompt
+    def test_time_in_prompt(self):
+        assert "08:00" in self._get_system_prompt("08:00")
 
-    def test_afternoon_includes_limited_guidance(self):
-        prompt = self._get_system_prompt("14:00")
-        assert "still time" in prompt
-
-    def test_evening_drops_activity_guidance(self):
-        prompt = self._get_system_prompt("19:00")
-        assert "too late" in prompt
-
-    def test_wellness_context_included_when_provided(self):
+    def test_workout_in_prompt(self):
         m.claude_recommend(
             0,
             0,
             2000,
-            [],
-            "08:00",
-            {
-                "sleep_score": 72,
-                "sleep_duration_h": 7.2,
-                "hrv_last_night": 58,
-                "weight_trend_7d_kg": -0.3,
-            },
+            [
+                {
+                    "name": "Morning ride",
+                    "type": "road_biking",
+                    "duration_min": 60,
+                    "avg_power_w": 200,
+                    "kcal": 600,
+                }
+            ],
+            "14:00",
         )
-        call_args = self.mock_client.messages.create.call_args
-        prompt = call_args.kwargs.get("system", "")
-        assert "sleep score 72" in prompt
-        assert "HRV 58ms" in prompt
-        assert "weight trending down" in prompt
+        prompt = self.mock_client.messages.create.call_args.kwargs.get("system", "")
+        assert "Morning ride" in prompt
+        assert "200W" in prompt
+
+    def test_body_battery_in_prompt(self):
+        m.claude_recommend(0, 0, 2000, [], "08:00", {"body_battery_charged": 45})
+        prompt = self.mock_client.messages.create.call_args.kwargs.get("system", "")
+        assert "Body battery: 45%" in prompt
+
+    def test_hrv_in_prompt(self):
+        m.claude_recommend(0, 0, 2000, [], "08:00", {"hrv_last_night": 58})
+        prompt = self.mock_client.messages.create.call_args.kwargs.get("system", "")
+        assert "HRV: 58ms" in prompt
+
+    def test_weight_trend_in_prompt(self):
+        m.claude_recommend(0, 0, 2000, [], "08:00", {"weight_trend_7d_kg": -0.3})
+        prompt = self.mock_client.messages.create.call_args.kwargs.get("system", "")
+        assert "trending down" in prompt

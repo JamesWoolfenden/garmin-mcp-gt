@@ -239,49 +239,41 @@ def claude_recommend(
         or "none recorded"
     )
 
-    hour = int(time_of_day.split(":")[0])
+    # Build physiological context — let Claude reason rather than hard-coding rules
+    context_parts = [f"Current time: {time_of_day}."]
+
     workout_acts = [
         a for a in (activities or []) if a.get("type") not in ("walking", None)
     ]
-    total_workout_min = sum(a.get("duration_min", 0) for a in workout_acts)
+    if workout_acts:
+        workout_summary = ", ".join(
+            f"{a['name']} {a['duration_min']}min"
+            + (f" @ {a['avg_power_w']}W avg" if a.get("avg_power_w") else "")
+            for a in workout_acts
+        )
+        context_parts.append(f"Workouts today: {workout_summary}.")
 
-    if total_workout_min >= 60:
-        activity_guidance = (
-            f"The user has already done {total_workout_min} minutes of structured exercise today. "
-            "Do NOT suggest more structured workouts. A short walk is fine if relevant, "
-            "but focus primarily on nutrition and recovery."
-        )
-    elif total_workout_min > 0:
-        activity_guidance = (
-            f"The user has done {total_workout_min} minutes of exercise today. "
-            "Consider whether additional light activity would help meet their target, "
-            "but don't suggest hard effort."
-        )
-    elif hour >= 17:
-        activity_guidance = "It is too late to meaningfully change activity today — focus advice on food only."
-    elif hour >= 13:
-        activity_guidance = "There is still time for a short walk or evening session if activity is low."
-    else:
-        activity_guidance = (
-            "There is plenty of time to act on both food and activity today."
-        )
-
-    wellness_str = ""
     if wellness:
-        parts = []
-        if "sleep_score" in wellness:
-            parts.append(
-                f"sleep score {wellness['sleep_score']}/100 ({wellness.get('sleep_duration_h', '?')}h)"
+        if wellness.get("body_battery_charged") is not None:
+            context_parts.append(
+                f"Body battery: {wellness['body_battery_charged']}% charged."
             )
-        if "hrv_last_night" in wellness:
-            parts.append(f"HRV {wellness['hrv_last_night']}ms")
-        if "weight_trend_7d_kg" in wellness:
-            direction = "up" if wellness["weight_trend_7d_kg"] > 0 else "down"
-            parts.append(
-                f"weight trending {direction} {abs(wellness['weight_trend_7d_kg'])}kg this week"
-            )
-        if parts:
-            wellness_str = f" Recovery context: {', '.join(parts)}."
+        if wellness.get("hrv_last_night"):
+            context_parts.append(f"Last night HRV: {wellness['hrv_last_night']}ms.")
+        if wellness.get("sleep_score"):
+            context_parts.append(f"Sleep score: {wellness['sleep_score']}/100.")
+
+    activity_guidance = (
+        " ".join(context_parts)
+        + " Use these signals to judge whether more activity is appropriate —"
+        " consider workout intensity, fatigue indicators (body battery, HRV), and time remaining in the day."
+    )
+
+    # Add weight trend separately (not already in activity_guidance)
+    wellness_str = ""
+    if wellness and "weight_trend_7d_kg" in wellness:
+        direction = "up" if wellness["weight_trend_7d_kg"] > 0 else "down"
+        wellness_str = f" Weight trending {direction} {abs(wellness['weight_trend_7d_kg'])}kg this week."
 
     msg = ANTHROPIC_CLIENT.messages.create(
         model="claude-sonnet-4-5",
