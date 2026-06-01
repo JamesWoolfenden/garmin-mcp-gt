@@ -104,9 +104,9 @@ jobs:
             --project pike-477416 \
             --allow-unauthenticated \
             --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest,GARMIN_API_SECRET=garmin-api-secret:latest,VAPID_PRIVATE_KEY=vapid-private-key:latest,INTERNAL_SECRET=fuel-internal-secret:latest" \
-            --set-env-vars="GARMIN_SIDECAR_URL=https://fuel.wlfdn.dev,VAPID_EMAIL=james.woolfenden@gmail.com" \
+            --set-env-vars="GARMIN_SIDECAR_URL=https://fuel.wlfdn.dev,VAPID_EMAIL=james.woolfenden@gmail.com,LITESTREAM_GCS_BUCKET=pike-477416-sqlite" \
             --min-instances=0 \
-            --max-instances=2 \
+            --max-instances=1 \
             --memory=512Mi \
             --timeout=30
 
