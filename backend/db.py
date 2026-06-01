@@ -1,8 +1,41 @@
+import base64
 import json
 import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+
+_KMS_KEY = os.environ.get(
+    "GARMIN_TOKEN_KMS_KEY",
+    "projects/pike-477416/locations/global/keyRings/fuel/cryptoKeys/garmin-tokens",
+)
+_USE_KMS = os.environ.get("DB_PATH", "") != ":memory:"  # skip KMS in tests
+
+
+def _encrypt(plaintext: str) -> str:
+    if not _USE_KMS:
+        return plaintext
+    from google.cloud import kms
+
+    client = kms.KeyManagementServiceClient()
+    resp = client.encrypt(request={"name": _KMS_KEY, "plaintext": plaintext.encode()})
+    return base64.b64encode(resp.ciphertext).decode()
+
+
+def _decrypt(ciphertext: str) -> str:
+    if not _USE_KMS:
+        return ciphertext
+    try:
+        from google.cloud import kms
+
+        client = kms.KeyManagementServiceClient()
+        resp = client.decrypt(
+            request={"name": _KMS_KEY, "ciphertext": base64.b64decode(ciphertext)}
+        )
+        return resp.plaintext.decode()
+    except Exception:
+        return ciphertext  # fallback for unencrypted legacy data
+
 
 DB_PATH = os.environ.get("DB_PATH", "/data/fuel.db")
 
@@ -26,6 +59,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             user_id     TEXT PRIMARY KEY,
             tokens_json TEXT NOT NULL,
             updated_at  TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS garmin_upload_tokens (
+            token       TEXT PRIMARY KEY,
+            user_id     TEXT NOT NULL,
+            expires_at  TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS mcp_api_keys (
@@ -71,7 +110,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 def save_garmin_tokens(user_id: str, tokens_json: str) -> None:
     get_db().execute(
         "INSERT OR REPLACE INTO garmin_tokens (user_id, tokens_json, updated_at) VALUES (?, ?, ?)",
-        (user_id, tokens_json, datetime.now(timezone.utc).isoformat()),
+        (user_id, _encrypt(tokens_json), datetime.now(timezone.utc).isoformat()),
     )
     get_db().commit()
 
@@ -82,10 +121,37 @@ def load_garmin_tokens(user_id: str) -> str | None:
         .execute("SELECT tokens_json FROM garmin_tokens WHERE user_id=?", (user_id,))
         .fetchone()
     )
-    return row["tokens_json"] if row else None
+    return _decrypt(row["tokens_json"]) if row else None
 
 
 # ── MCP API keys ──────────────────────────────────────────────────────────────
+
+
+def create_upload_token(token: str, user_id: str, expires_at: str) -> None:
+    get_db().execute(
+        "INSERT OR REPLACE INTO garmin_upload_tokens (token, user_id, expires_at) VALUES (?, ?, ?)",
+        (token, user_id, expires_at),
+    )
+    get_db().commit()
+
+
+def consume_upload_token(token: str) -> str | None:
+    """Validate and delete the token, returning the user_id if valid and unexpired."""
+    row = (
+        get_db()
+        .execute(
+            "SELECT user_id, expires_at FROM garmin_upload_tokens WHERE token=?",
+            (token,),
+        )
+        .fetchone()
+    )
+    if not row:
+        return None
+    if row["expires_at"] < datetime.now(timezone.utc).isoformat():
+        return None
+    get_db().execute("DELETE FROM garmin_upload_tokens WHERE token=?", (token,))
+    get_db().commit()
+    return row["user_id"]
 
 
 def upsert_mcp_api_key(key_hash: str, user_id: str) -> None:

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { logFood, getTodayFood, deleteFood, getBalance, sendChat } from "./lib/api";
+import { logFood, getTodayFood, deleteFood, getBalance, sendChat, createGarminUploadToken } from "./lib/api";
 import { usePush } from "./hooks/usePush";
 import { useAuth } from "./hooks/useAuth";
 import { signInWithGoogle, signInWithEmail, registerWithEmail, signOutUser } from "./firebase";
@@ -125,6 +125,55 @@ function Chat() {
         />
         <button className="log-btn" type="submit" disabled={loading || !input.trim()}>Ask</button>
       </form>
+    </div>
+  );
+}
+
+function GarminConnect() {
+  const [token, setToken] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const generate = async () => {
+    setLoading(true);
+    try {
+      const { token: t } = await createGarminUploadToken();
+      setToken(t);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copy = () => {
+    navigator.clipboard.writeText(
+      `cd E:\\code\\garmin && .\\garmin-upload-tokens.ps1 -UploadToken "${token}"`
+    );
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div style={{padding:"16px 20px",borderTop:"1px solid var(--border)"}}>
+      <p style={{fontSize:"13px",color:"var(--muted)",marginBottom:"10px"}}>
+        Connect your Garmin to enable activity-aware advice.
+      </p>
+      {!token ? (
+        <button className="push-btn" onClick={generate} disabled={loading}>
+          {loading ? "Generating…" : "Connect Garmin"}
+        </button>
+      ) : (
+        <div>
+          <p style={{fontSize:"12px",color:"var(--muted)",marginBottom:"6px"}}>
+            Run this command on your desktop (valid 15 min):
+          </p>
+          <code style={{fontSize:"11px",background:"var(--surface)",padding:"8px",borderRadius:"6px",display:"block",wordBreak:"break-all",color:"var(--accent)"}}>
+            .\garmin-upload-tokens.ps1 -UploadToken "{token}"
+          </code>
+          <button className="push-btn" style={{marginTop:"8px"}} onClick={copy}>
+            {copied ? "Copied!" : "Copy command"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -281,12 +330,13 @@ export default function App() {
         </>
       )}
 
-      {entries.length > 0 && (
+      {tab === "food" && entries.length > 0 && (
         <div className="day-total">
           <span>Total today</span>
           <span>{Math.round(totalKcal)} kcal</span>
         </div>
       )}
+      {tab === "food" && <GarminConnect />}
     </div>
   );
 }

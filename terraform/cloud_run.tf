@@ -74,6 +74,7 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
           }
         }
       }
+
     }
 
     timeout = "30s"

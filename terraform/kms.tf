@@ -1,0 +1,19 @@
+resource "google_kms_key_ring" "fuel" {
+  name     = "fuel"
+  location = "global"
+}
+
+resource "google_kms_crypto_key" "garmin_tokens" {
+  name     = "garmin-tokens"
+  key_ring = google_kms_key_ring.fuel.id
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "google_kms_crypto_key_iam_member" "compute_encrypter" {
+  crypto_key_id = google_kms_crypto_key.garmin_tokens.id
+  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+  member        = "serviceAccount:${local.compute_sa}"
+}

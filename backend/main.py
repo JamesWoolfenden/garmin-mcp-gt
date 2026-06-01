@@ -34,6 +34,8 @@ import hashlib
 import secrets
 
 from db import (
+    consume_upload_token,
+    create_upload_token,
     delete_food_entry,
     delete_push_subscription,
     delete_mcp_api_keys,
@@ -402,11 +404,43 @@ def update_profile(body: ProfileUpdate, uid: str = Depends(current_user)):
 # -- Garmin token upload -------------------------------------------------------
 
 
+@app.post("/garmin/upload-token")
+def create_garmin_upload_token(uid: str = Depends(current_user)):
+    """Generate a short-lived token for use with garmin-upload-tokens.ps1."""
+    token = secrets.token_urlsafe(32)
+    from datetime import timedelta
+
+    expires_at = (
+        datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=15)
+    ).isoformat()
+    create_upload_token(token, uid, expires_at)
+    return {"token": token, "expires_in_minutes": 15}
+
+
 @app.put("/garmin/tokens")
 async def upload_garmin_tokens(request: Request, uid: str = Depends(current_user)):
+    """Upload tokens via Firebase auth (used internally)."""
     tokens_json = (await request.body()).decode()
     try:
-        json.loads(tokens_json)  # validate it's valid JSON
+        json.loads(tokens_json)
+    except Exception:
+        raise HTTPException(400, "tokens must be valid JSON")
+    save_garmin_tokens(uid, tokens_json)
+    return {"ok": True}
+
+
+@app.put("/garmin/tokens/upload")
+async def upload_garmin_tokens_with_token(request: Request):
+    """Upload tokens using a short-lived upload token from the app UI."""
+    upload_token = request.headers.get("X-Upload-Token", "").strip()
+    if not upload_token:
+        raise HTTPException(401, "X-Upload-Token header required")
+    uid = consume_upload_token(upload_token)
+    if not uid:
+        raise HTTPException(401, "Invalid or expired upload token")
+    tokens_json = (await request.body()).decode()
+    try:
+        json.loads(tokens_json)
     except Exception:
         raise HTTPException(400, "tokens must be valid JSON")
     save_garmin_tokens(uid, tokens_json)

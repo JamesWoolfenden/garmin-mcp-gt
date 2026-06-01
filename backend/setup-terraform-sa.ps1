@@ -49,7 +49,12 @@ $roleBody = @{
     "storage.buckets.list", "storage.buckets.setIamPolicy",
     "storage.buckets.update",
     "storage.objects.create", "storage.objects.delete",
-    "storage.objects.get", "storage.objects.list"
+    "storage.objects.get", "storage.objects.list",
+    "cloudkms.keyRings.create", "cloudkms.keyRings.get", "cloudkms.keyRings.list",
+    "cloudkms.cryptoKeys.create", "cloudkms.cryptoKeys.get",
+    "cloudkms.cryptoKeys.list", "cloudkms.cryptoKeys.update",
+    "cloudkms.cryptoKeyVersions.list",
+    "cloudkms.cryptoKeys.getIamPolicy", "cloudkms.cryptoKeys.setIamPolicy"
   )
 } | ConvertTo-Json -Depth 5
 

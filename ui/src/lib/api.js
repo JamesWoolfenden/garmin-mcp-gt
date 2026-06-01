@@ -30,3 +30,4 @@ export async function unsubscribePush(endpoint) {
   return req("/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint }) });
 }
 export const sendChat = (message) => req("/chat", { method: "POST", body: JSON.stringify({ message }) });
+export const createGarminUploadToken = () => req("/garmin/upload-token", { method: "POST" });

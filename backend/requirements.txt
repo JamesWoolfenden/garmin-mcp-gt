@@ -7,3 +7,4 @@ pydantic>=2.7.0
 firebase-admin>=6.5.0
 garminconnect>=0.3.2,<0.4
 mcp>=1.0.0
+google-cloud-kms>=2.21.0
