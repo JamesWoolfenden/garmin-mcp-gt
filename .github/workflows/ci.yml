@@ -56,8 +56,12 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.DEPLOY_SA }}
       - uses: google-github-actions/setup-gcloud@v2
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker gcr.io --quiet
       - name: Build and push image
-        run: gcloud builds submit backend/ --tag gcr.io/pike-477416/fuel-backend --project pike-477416
+        run: |
+          docker build -t gcr.io/pike-477416/fuel-backend backend/
+          docker push gcr.io/pike-477416/fuel-backend
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy fuel-backend \
