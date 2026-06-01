@@ -5,3 +5,5 @@ anthropic==0.26.0
 pywebpush==2.0.0
 pydantic==2.7.1
 firebase-admin==6.5.0
+garminconnect>=0.3.2,<0.4
+mcp>=1.0.0

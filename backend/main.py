@@ -20,7 +20,6 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Any
 
-import httpx
 import firebase_admin
 from firebase_admin import auth as firebase_auth
 from fastapi import FastAPI, HTTPException, Request, Depends
@@ -31,17 +30,25 @@ import anthropic
 from pywebpush import webpush, WebPushException
 import logging
 
+import hashlib
+import secrets
+
 from db import (
     delete_food_entry,
     delete_push_subscription,
+    delete_mcp_api_keys,
     get_all_subscribed_users,
     get_food_entries,
     get_profile,
     get_push_subscriptions,
+    get_user_for_mcp_key,
     insert_food_entry,
+    save_garmin_tokens,
+    upsert_mcp_api_key,
     upsert_profile,
     upsert_push_subscription,
 )
+from garmin_client import GarminSession
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -57,8 +64,8 @@ app.add_middleware(
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-GARMIN_URL = os.environ["GARMIN_SIDECAR_URL"]
-GARMIN_SECRET = os.environ["GARMIN_API_SECRET"]
+GARMIN_URL = os.environ.get("GARMIN_SIDECAR_URL", "")
+GARMIN_SECRET = os.environ.get("GARMIN_API_SECRET", "")
 ANTHROPIC_CLIENT = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 VAPID_PRIVATE_KEY = os.environ["VAPID_PRIVATE_KEY"]
 VAPID_CLAIMS = {"sub": f"mailto:{os.environ.get('VAPID_EMAIL', 'you@example.com')}"}
@@ -85,31 +92,66 @@ def today_str() -> str:
     return date.today().isoformat()
 
 
-async def fetch_garmin() -> dict[str, Any] | None:
+def _garmin_today(uid: str) -> dict[str, Any] | None:
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            r = await client.get(
-                f"{GARMIN_URL}/garmin/today",
-                headers={"X-API-Secret": GARMIN_SECRET},
-            )
-            r.raise_for_status()
-            return r.json()
+        with GarminSession(uid) as g:
+            today = date.today().isoformat()
+            stats = g.get_stats(today)
+            hr = g.get_heart_rates(today)
+            bb = g.get_body_battery(today) or []
+            battery = {}
+            if bb:
+                battery = {
+                    "charged": bb[0].get("charged"),
+                    "drained": bb[0].get("drained"),
+                }
+            return {
+                "date": today,
+                "active_kcal": stats.get("activeKilocalories", 0),
+                "total_kcal": stats.get("totalKilocalories", 0),
+                "steps": stats.get("totalSteps", 0),
+                "distance_km": round(stats.get("totalDistanceMeters", 0) / 1000, 2),
+                "active_minutes": stats.get("activeSeconds", 0) // 60,
+                "resting_hr_bpm": hr.get("restingHeartRate"),
+                "body_battery": battery,
+            }
     except Exception as e:
-        logger.error(f"Garmin fetch error: {e}")
+        logger.warning(f"Garmin today fetch failed: {e}")
         return None
 
 
-async def fetch_garmin_activities() -> list[dict] | None:
+def _garmin_activities(uid: str) -> list[dict] | None:
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            r = await client.get(
-                f"{GARMIN_URL}/garmin/activities",
-                headers={"X-API-Secret": GARMIN_SECRET},
-            )
-            r.raise_for_status()
-            return r.json().get("activities", [])
-    except Exception:
+        with GarminSession(uid) as g:
+            today = date.today().isoformat()
+            raw = g.get_activities(0, 20)
+            from garmin_mcp import _dedup
+
+            todays = [
+                a for a in _dedup(raw) if a.get("startTimeLocal", "")[:10] == today
+            ]
+            return [
+                {
+                    "name": (a.get("activityName") or "")[:100],
+                    "type": a.get("activityType", {}).get("typeKey"),
+                    "duration_min": int(a.get("duration", 0) // 60),
+                    "distance_km": round(a.get("distance", 0) / 1000, 2),
+                    "kcal": a.get("calories", 0),
+                    "avg_power_w": a.get("avgPower"),
+                }
+                for a in todays
+            ]
+    except Exception as e:
+        logger.warning(f"Garmin activities fetch failed: {e}")
         return None
+
+
+async def fetch_garmin(uid: str) -> dict[str, Any] | None:
+    return await run_in_threadpool(_garmin_today, uid)
+
+
+async def fetch_garmin_activities(uid: str) -> list[dict] | None:
+    return await run_in_threadpool(_garmin_activities, uid)
 
 
 def claude_parse_food(text: str) -> dict[str, Any]:
@@ -258,8 +300,8 @@ async def _compute_balance(uid: str) -> dict:
     profile = get_profile(uid)
     kcal_target = profile["kcal_target"]
 
-    garmin = await fetch_garmin()
-    activities = await fetch_garmin_activities()
+    garmin = await fetch_garmin(uid)
+    activities = await fetch_garmin_activities(uid)
     kcal_burned = garmin["active_kcal"] if garmin else 0
 
     if garmin and not activities:
@@ -357,6 +399,32 @@ def update_profile(body: ProfileUpdate, uid: str = Depends(current_user)):
     return upsert_profile(uid, updates)
 
 
+# -- Garmin token upload -------------------------------------------------------
+
+
+@app.put("/garmin/tokens")
+async def upload_garmin_tokens(request: Request, uid: str = Depends(current_user)):
+    tokens_json = (await request.body()).decode()
+    try:
+        json.loads(tokens_json)  # validate it's valid JSON
+    except Exception:
+        raise HTTPException(400, "tokens must be valid JSON")
+    save_garmin_tokens(uid, tokens_json)
+    return {"ok": True}
+
+
+# -- MCP API keys -------------------------------------------------------------
+
+
+@app.post("/garmin/mcp-key")
+def generate_mcp_key(uid: str = Depends(current_user)):
+    raw_key = secrets.token_urlsafe(32)
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    delete_mcp_api_keys(uid)  # revoke any existing key
+    upsert_mcp_api_key(key_hash, uid)
+    return {"key": raw_key}
+
+
 # -- Internal nudge (Cloud Scheduler) ----------------------------------------
 
 
@@ -379,3 +447,53 @@ async def nudge(request: Request):
                 pushed_total += 1
 
     return {"pushed": pushed_total}
+
+
+# ── MCP server ────────────────────────────────────────────────────────────────
+# Mounted at /mcp — Claude connects here using a long-lived API key.
+# Generate a key via POST /garmin/mcp-key (requires Firebase auth).
+
+
+def _mcp_user(request: Request) -> str:
+    key = request.headers.get("X-MCP-Key", "").strip()
+    if not key:
+        raise HTTPException(status_code=401, detail="X-MCP-Key header required")
+    key_hash = hashlib.sha256(key.encode()).hexdigest()
+    uid = get_user_for_mcp_key(key_hash)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid MCP key")
+    return uid
+
+
+try:
+    from mcp.server.fastmcp import FastMCP
+    from garmin_mcp import _analyse_heart_rates
+
+    mcp = FastMCP("Garmin")
+
+    @mcp.tool()
+    def get_today_stats(request: Request = None) -> dict:
+        """Return today's step count, distance, calories, active time, and resting HR."""
+        uid = _mcp_user(request) if request else ""
+        result = _garmin_today(uid)
+        if result is None:
+            return {"error": "Garmin data unavailable"}
+        return result
+
+    @mcp.tool()
+    def get_sedentary_analysis(offset_days: int = 0, request: Request = None) -> dict:
+        """Analyse how sedentary a day was based on heart rate patterns."""
+        uid = _mcp_user(request) if request else ""
+        with GarminSession(uid) as g:
+            from datetime import timedelta
+
+            d = (
+                date.today() - timedelta(days=max(0, min(offset_days, 30)))
+            ).isoformat()
+            data = g.get_heart_rates(d)
+        return _analyse_heart_rates(data, d)
+
+    app.mount("/mcp", mcp.get_asgi_app())
+    logger.info("MCP server mounted at /mcp")
+except Exception as e:
+    logger.warning(f"MCP server not available: {e}")
