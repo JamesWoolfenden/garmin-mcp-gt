@@ -12,7 +12,12 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
       image = "gcr.io/${var.project_id}/fuel-backend:latest"
 
       resources {
-        limits = { memory = "512Mi" }
+        limits = {
+          cpu    = "1000m"
+          memory = "512Mi"
+        }
+        cpu_idle          = true
+        startup_cpu_boost = true
       }
 
       env {
@@ -25,20 +30,42 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
         value = var.vapid_email
       }
 
-      dynamic "env" {
-        for_each = {
-          ANTHROPIC_API_KEY = google_secret_manager_secret.anthropic_api_key.secret_id
-          GARMIN_API_SECRET = google_secret_manager_secret.garmin_api_secret.secret_id
-          VAPID_PRIVATE_KEY = google_secret_manager_secret.vapid_private_key.secret_id
-          INTERNAL_SECRET   = google_secret_manager_secret.internal_secret.secret_id
+      env {
+        name = "ANTHROPIC_API_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.anthropic_api_key.secret_id
+            version = "latest"
+          }
         }
-        content {
-          name = env.key
-          value_source {
-            secret_key_ref {
-              secret  = env.value
-              version = "latest"
-            }
+      }
+
+      env {
+        name = "GARMIN_API_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.garmin_api_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "VAPID_PRIVATE_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.vapid_private_key.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "INTERNAL_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.internal_secret.secret_id
+            version = "latest"
           }
         }
       }

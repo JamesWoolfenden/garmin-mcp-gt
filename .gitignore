@@ -17,6 +17,7 @@ backend/public_key.pem
 *.tfstate.backup
 *.tfplan
 .terraform.lock.hcl
+terraform/terraform.tfvars
 
 # Python
 __pycache__/

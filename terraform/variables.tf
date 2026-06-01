@@ -17,3 +17,8 @@ variable "garmin_sidecar_url" {
 variable "github_repo" {
   default = "JamesWoolfenden/garmin-mcp-gt"
 }
+
+variable "internal_secret" {
+  description = "Value of the fuel-internal-secret Secret Manager secret"
+  sensitive   = true
+}
