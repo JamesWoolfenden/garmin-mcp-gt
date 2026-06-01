@@ -166,21 +166,8 @@ def get_activity_detail(activity_id: str) -> dict[str, Any]:
     }
 
 
-@mcp.tool()
-def get_sedentary_analysis(offset_days: int = 0) -> dict[str, Any]:
-    """Analyse how sedentary a day was based on heart rate patterns.
-
-    Classifies the day into sedentary, light, moderate, and active time using
-    resting HR as the baseline. Also reports longest sedentary streak and an
-    hourly average HR breakdown.
-
-    Args:
-        offset_days: 0 = today, 1 = yesterday, etc. (max 30).
-    """
-    offset_days = max(0, min(offset_days, 30))
-    d = (date.today() - timedelta(days=offset_days)).isoformat()
-    data = client().get_heart_rates(d)
-
+def _analyse_heart_rates(data: dict, d: str) -> dict[str, Any]:
+    """Pure analysis of raw Garmin HR data for a given local date string."""
     resting = data.get("restingHeartRate") or 60
     readings = [
         (r[0], r[1]) for r in (data.get("heartRateValues") or []) if r[1] is not None
@@ -215,7 +202,6 @@ def get_sedentary_analysis(offset_days: int = 0) -> dict[str, Any]:
     in_sedentary = False
     hourly: dict[int, list[int]] = {}
 
-    # Derive UTC offset from the GMT vs local start timestamps
     try:
         fmt = "%Y-%m-%dT%H:%M:%S"
         gmt_start = datetime.strptime(data["startTimestampGMT"], fmt)
@@ -228,7 +214,7 @@ def get_sedentary_analysis(offset_days: int = 0) -> dict[str, Any]:
     for ts_ms, bpm in readings:
         local_dt = datetime.fromtimestamp(ts_ms / 1000, tz=local_tz)
         if local_dt.date().isoformat() != d:
-            continue  # skip readings that belong to a different local date
+            continue
         hour = local_dt.hour
         hourly.setdefault(hour, []).append(bpm)
 
@@ -270,6 +256,22 @@ def get_sedentary_analysis(offset_days: int = 0) -> dict[str, Any]:
             f"{h:02d}:00": round(sum(v) / len(v)) for h, v in sorted(hourly.items())
         },
     }
+
+
+@mcp.tool()
+def get_sedentary_analysis(offset_days: int = 0) -> dict[str, Any]:
+    """Analyse how sedentary a day was based on heart rate patterns.
+
+    Classifies the day into sedentary, light, moderate, and active time using
+    resting HR as the baseline. Also reports longest sedentary streak and an
+    hourly average HR breakdown.
+
+    Args:
+        offset_days: 0 = today, 1 = yesterday, etc. (max 30).
+    """
+    offset_days = max(0, min(offset_days, 30))
+    d = (date.today() - timedelta(days=offset_days)).isoformat()
+    return _analyse_heart_rates(client().get_heart_rates(d), d)
 
 
 @mcp.tool()
