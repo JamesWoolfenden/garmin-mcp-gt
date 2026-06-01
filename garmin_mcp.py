@@ -191,9 +191,11 @@ def _analyse_heart_rates(data: dict, d: str) -> dict[str, Any]:
     else:
         interval_min = 1.0
 
-    light_threshold = resting + 20
-    moderate_threshold = resting + 40
-    active_threshold = resting + 60
+    # Percentage-based thresholds work better for fit users with low resting HR.
+    # resting+20 misclassifies brisk walking as sedentary at resting HR ~52.
+    light_threshold = round(resting * 1.2)
+    moderate_threshold = round(resting * 1.5)
+    active_threshold = round(resting * 1.8)
 
     buckets = {"sedentary": 0.0, "light": 0.0, "moderate": 0.0, "active": 0.0}
     current_streak = 0.0

@@ -50,13 +50,13 @@ def test_all_sedentary():
 
 
 def test_active_reading_classified_correctly():
-    # resting=60: sedentary≤80, light≤100, moderate≤120, active>120
+    # resting=60: sedentary≤72 (×1.2), light≤90 (×1.5), moderate≤108 (×1.8), active>108
     # Use 10 readings per zone at 1-min intervals so buckets round above 0.0
     readings = (
-        [(ts(8) + i * 60000, 65) for i in range(10)]  # sedentary
-        + [(ts(9) + i * 60000, 85) for i in range(10)]  # light
-        + [(ts(10) + i * 60000, 105) for i in range(10)]  # moderate
-        + [(ts(11) + i * 60000, 125) for i in range(10)]  # active
+        [(ts(8) + i * 60000, 65) for i in range(10)]  # sedentary (65 ≤ 72)
+        + [(ts(9) + i * 60000, 80) for i in range(10)]  # light (72 < 80 ≤ 90)
+        + [(ts(10) + i * 60000, 100) for i in range(10)]  # moderate (90 < 100 ≤ 108)
+        + [(ts(11) + i * 60000, 120) for i in range(10)]  # active (120 > 108)
     )
     data = make_data(readings, resting=60)
     result = _analyse_heart_rates(data, DATE)
