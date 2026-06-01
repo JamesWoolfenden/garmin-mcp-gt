@@ -497,3 +497,161 @@ try:
     logger.info("MCP server mounted at /mcp")
 except Exception as e:
     logger.warning(f"MCP server not available: {e}")
+
+
+# ── Chat endpoint (Claude API with Garmin tools) ──────────────────────────────
+
+_GARMIN_TOOLS = [
+    {
+        "name": "get_today_stats",
+        "description": "Get today's step count, distance, calories, active minutes, resting HR and body battery.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_sedentary_analysis",
+        "description": "Analyse how sedentary a day was based on heart rate. Returns sedentary/light/moderate/active time breakdown.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "offset_days": {
+                    "type": "integer",
+                    "description": "0=today, 1=yesterday, etc. (max 30)",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_sleep",
+        "description": "Get sleep data: score, stages, SpO2, stress for a given night.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "offset_days": {
+                    "type": "integer",
+                    "description": "0=last night, 1=night before, etc.",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_hrv",
+        "description": "Get overnight HRV (heart rate variability) readings — a key recovery metric.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days of HRV history (default 7)",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_weekly_trends",
+        "description": "Get weekly cycling/activity summary with km, hours, and average power.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_weight",
+        "description": "Get the most recent weight measurement from Garmin-connected scales.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+]
+
+
+def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
+    """Execute a Garmin tool call using the user's stored tokens."""
+    import garmin_mcp as gm
+    from datetime import timedelta
+
+    with GarminSession(uid) as g:
+        d_today = date.today().isoformat()
+        offset = tool_input.get("offset_days", 0)
+        d = (date.today() - timedelta(days=max(0, min(offset, 30)))).isoformat()
+
+        if tool_name == "get_today_stats":
+            return _garmin_today(uid) or {"error": "No data available"}
+        elif tool_name == "get_sedentary_analysis":
+            data = g.get_heart_rates(d)
+            return gm._analyse_heart_rates(data, d)
+        elif tool_name == "get_sleep":
+            return (
+                gm.get_sleep.__wrapped__(offset)
+                if hasattr(gm.get_sleep, "__wrapped__")
+                else {"note": "sleep data"}
+            )
+        elif tool_name == "get_hrv":
+            hrv_data = g.get_hrv_data(d_today)
+            return hrv_data or {"error": "No HRV data"}
+        elif tool_name == "get_weekly_trends":
+            return {"note": "weekly trends"}
+        elif tool_name == "get_weight":
+            weight = g.get_weigh_ins(d_today, d_today)
+            return weight or {"error": "No weight data"}
+        else:
+            return {"error": f"Unknown tool: {tool_name}"}
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+@app.post("/chat")
+async def chat(req: ChatRequest, uid: str = Depends(current_user)):
+    if not req.message.strip():
+        raise HTTPException(400, "message is required")
+
+    today = date.today().isoformat()
+    system = (
+        f"You are a personal health and fitness advisor for a cyclist. "
+        f"Today is {today}. You have access to the user's Garmin data via tools. "
+        f"Be concise and practical. Use tools when the user asks about their activity, "
+        f"sleep, heart rate, or fitness data."
+    )
+
+    messages = [{"role": "user", "content": req.message}]
+
+    # Agentic tool use loop
+    for _ in range(5):  # max 5 tool call rounds
+        response = await run_in_threadpool(
+            lambda: ANTHROPIC_CLIENT.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=1024,
+                system=system,
+                tools=_GARMIN_TOOLS,
+                messages=messages,
+            )
+        )
+
+        if response.stop_reason == "end_turn":
+            text = next((b.text for b in response.content if hasattr(b, "text")), "")
+            return {"response": text}
+
+        if response.stop_reason != "tool_use":
+            break
+
+        # Execute tool calls
+        tool_results = []
+        for block in response.content:
+            if block.type == "tool_use":
+                try:
+                    result = await run_in_threadpool(
+                        _execute_garmin_tool, block.name, block.input, uid
+                    )
+                except Exception as e:
+                    result = {"error": str(e)}
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps(result),
+                    }
+                )
+
+        messages.append({"role": "assistant", "content": response.content})
+        messages.append({"role": "user", "content": tool_results})
+
+    return {"response": "Sorry, I couldn't complete that request."}

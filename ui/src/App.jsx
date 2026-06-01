@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { logFood, getTodayFood, deleteFood, getBalance } from "./lib/api";
+import { logFood, getTodayFood, deleteFood, getBalance, sendChat } from "./lib/api";
 import { usePush } from "./hooks/usePush";
 import { useAuth } from "./hooks/useAuth";
 import { signInWithGoogle, signInWithEmail, registerWithEmail, signOutUser } from "./firebase";
@@ -77,6 +77,58 @@ function PushToggle({ pushState, onSubscribe, onUnsubscribe }) {
   );
 }
 
+function Chat() {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const bottomRef = useRef(null);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+  const send = async (e) => {
+    e.preventDefault();
+    if (!input.trim() || loading) return;
+    const text = input.trim();
+    setInput("");
+    setMessages(prev => [...prev, { role: "user", text }]);
+    setLoading(true);
+    try {
+      const { response } = await sendChat(text);
+      setMessages(prev => [...prev, { role: "assistant", text: response }]);
+    } catch {
+      setMessages(prev => [...prev, { role: "assistant", text: "Sorry, something went wrong." }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="chat">
+      <div className="chat-messages">
+        {messages.length === 0 && (
+          <p className="empty">Ask about your activity, sleep, heart rate…</p>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} className={`chat-msg chat-msg-${m.role}`}>{m.text}</div>
+        ))}
+        {loading && <div className="chat-msg chat-msg-assistant">…</div>}
+        <div ref={bottomRef} />
+      </div>
+      <form className="log-form" onSubmit={send}>
+        <input
+          className="log-input"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          placeholder="How did I sleep last night?"
+          disabled={loading}
+          autoComplete="off"
+        />
+        <button className="log-btn" type="submit" disabled={loading || !input.trim()}>Ask</button>
+      </form>
+    </div>
+  );
+}
+
 function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -120,6 +172,7 @@ function SignIn() {
 
 export default function App() {
   const user = useAuth();
+  const [tab, setTab] = useState("food"); // food | chat
   const [input, setInput] = useState("");
   const [entries, setEntries] = useState([]);
   const [balance, setBalance] = useState(null);
@@ -181,46 +234,52 @@ export default function App() {
         <div className="header-inner">
           <span className="wordmark">fuel</span>
           <div style={{display:"flex",gap:"0.5rem",alignItems:"center"}}>
+            <button className={`push-btn${tab === "food" ? " active" : ""}`} onClick={() => setTab("food")}>Log</button>
+            <button className={`push-btn${tab === "chat" ? " active" : ""}`} onClick={() => setTab("chat")}>Ask</button>
             <PushToggle pushState={pushState} onSubscribe={subscribe} onUnsubscribe={unsubscribe} />
             <button className="push-btn" onClick={signOutUser}>Sign out</button>
           </div>
         </div>
       </header>
 
-      {balance && (
-        <div className="balance-section">
-          <BalanceBar kcalIn={balance.kcal_in} kcalBurned={balance.kcal_burned} kcalTarget={balance.kcal_target} />
-          <Recommendation text={balance.recommendation} status={balance.status} />
-        </div>
+      {tab === "chat" ? <Chat /> : (
+        <>
+          {balance && (
+            <div className="balance-section">
+              <BalanceBar kcalIn={balance.kcal_in} kcalBurned={balance.kcal_burned} kcalTarget={balance.kcal_target} />
+              <Recommendation text={balance.recommendation} status={balance.status} />
+            </div>
+          )}
+
+          <form className="log-form" onSubmit={handleLog}>
+            <input
+              ref={inputRef}
+              className="log-input"
+              type="text"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              placeholder="had granola and a coffee…"
+              disabled={loading}
+              autoComplete="off"
+              autoCapitalize="none"
+            />
+            <button className="log-btn" type="submit" disabled={loading || !input.trim()}>
+              {loading ? "…" : "Log"}
+            </button>
+          </form>
+
+          {error && <div className="error-banner">{error}</div>}
+
+          <div className="entries">
+            {entries.length === 0 && (
+              <p className="empty">Nothing logged yet. Tell me what you have eaten.</p>
+            )}
+            {entries.map(entry => (
+              <FoodEntry key={entry.id} entry={entry} onDelete={handleDelete} />
+            ))}
+          </div>
+        </>
       )}
-
-      <form className="log-form" onSubmit={handleLog}>
-        <input
-          ref={inputRef}
-          className="log-input"
-          type="text"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          placeholder="had granola and a coffee…"
-          disabled={loading}
-          autoComplete="off"
-          autoCapitalize="none"
-        />
-        <button className="log-btn" type="submit" disabled={loading || !input.trim()}>
-          {loading ? "…" : "Log"}
-        </button>
-      </form>
-
-      {error && <div className="error-banner">{error}</div>}
-
-      <div className="entries">
-        {entries.length === 0 && (
-          <p className="empty">Nothing logged yet. Tell me what you have eaten.</p>
-        )}
-        {entries.map(entry => (
-          <FoodEntry key={entry.id} entry={entry} onDelete={handleDelete} />
-        ))}
-      </div>
 
       {entries.length > 0 && (
         <div className="day-total">

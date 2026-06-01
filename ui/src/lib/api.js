@@ -29,3 +29,4 @@ export async function subscribePush(subscription) {
 export async function unsubscribePush(endpoint) {
   return req("/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint }) });
 }
+export const sendChat = (message) => req("/chat", { method: "POST", body: JSON.stringify({ message }) });
