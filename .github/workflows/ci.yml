@@ -44,6 +44,9 @@ jobs:
 
   tofu:
     runs-on: ubuntu-latest
+    concurrency:
+      group: tofu-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: read
       id-token: write
