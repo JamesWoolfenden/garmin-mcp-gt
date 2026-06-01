@@ -10,6 +10,10 @@ for mod in [
     "google.cloud.firestore",
     "anthropic",
     "pywebpush",
+    "garminconnect",
+    "mcp",
+    "mcp.server",
+    "mcp.server.fastmcp",
 ]:
     sys.modules.setdefault(mod, MagicMock())
 
