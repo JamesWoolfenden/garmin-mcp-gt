@@ -42,6 +42,36 @@ jobs:
           node-version: "20"
       - run: cd ui && npm ci && npm test
 
+  tofu:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.7.x"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Get internal secret
+        id: secret
+        run: echo "value=$(gcloud secrets versions access latest --secret fuel-internal-secret --project pike-477416)" >> $GITHUB_OUTPUT
+      - name: tofu init
+        run: tofu init
+        working-directory: terraform
+      - name: tofu plan
+        if: github.event_name == 'pull_request'
+        run: tofu plan -var="internal_secret=${{ steps.secret.outputs.value }}"
+        working-directory: terraform
+      - name: tofu apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: tofu apply -auto-approve -var="internal_secret=${{ steps.secret.outputs.value }}"
+        working-directory: terraform
+
   deploy-backend:
     needs: [lint-and-build, test-python, test-frontend]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
