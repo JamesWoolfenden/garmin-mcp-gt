@@ -1,6 +1,20 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
+
+vi.mock("../firebase", () => ({
+  auth: {},
+  signInWithGoogle: vi.fn(),
+  signInWithEmail: vi.fn(),
+  registerWithEmail: vi.fn(),
+  signOutUser: vi.fn(),
+  getIdToken: vi.fn().mockResolvedValue("test-token"),
+}));
+
+vi.mock("../hooks/useAuth", () => ({
+  useAuth: vi.fn().mockReturnValue({ uid: "test-user", email: "test@example.com" }),
+}));
+
 import App from "../App.jsx";
 
 // Mock the API module so no network calls are made
