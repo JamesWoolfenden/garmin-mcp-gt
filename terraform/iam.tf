@@ -84,17 +84,16 @@ resource "google_project_iam_custom_role" "fuel_terraform" {
   ]
 }
 
-resource "google_project_iam_member" "terraform_custom_role" {
-  project = var.project_id
-  role    = google_project_iam_custom_role.fuel_terraform.id
-  member  = "serviceAccount:${local.terraform_sa}"
-}
-
-resource "google_storage_bucket_iam_member" "terraform_state" {
-  bucket = "terraform-pike-bucket-tfstate"
-  role   = google_project_iam_custom_role.fuel_terraform.id
-  member = "serviceAccount:${local.terraform_sa}"
-}
+# Bootstrap: bind fuel_terraform role to the terraform SA manually —
+# Terraform cannot manage its own executor's permissions.
+#
+#   gcloud projects add-iam-policy-binding pike-477416 \
+#     --member="serviceAccount:github-actions-terraform@pike-477416.iam.gserviceaccount.com" \
+#     --role="projects/pike-477416/roles/fuel_terraform"
+#
+#   gcloud storage buckets add-iam-policy-binding gs://terraform-pike-bucket-tfstate \
+#     --member="serviceAccount:github-actions-terraform@pike-477416.iam.gserviceaccount.com" \
+#     --role="projects/pike-477416/roles/fuel_terraform"
 
 resource "google_service_account_iam_member" "wif_terraform" {
   service_account_id = google_service_account.terraform.name

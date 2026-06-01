@@ -73,7 +73,3 @@ import {
   to = google_service_account.terraform
 }
 
-import {
-  id = "terraform-pike-bucket-tfstate roles/storage.admin serviceAccount:github-actions-terraform@pike-477416.iam.gserviceaccount.com"
-  to = google_storage_bucket_iam_member.terraform_state
-}
