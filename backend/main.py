@@ -157,15 +157,18 @@ async def fetch_garmin_activities(uid: str) -> list[dict] | None:
 
 
 def claude_parse_food(text: str) -> dict[str, Any]:
-    """Ask Claude to parse a natural language food description into kcal."""
+    """Ask Claude to parse a natural language food description into kcal and macros."""
     msg = ANTHROPIC_CLIENT.messages.create(
         model="claude-sonnet-4-5",
-        max_tokens=200,
+        max_tokens=250,
         system=(
-            "You are a calorie estimator. Given a natural language food description, "
-            "return ONLY valid JSON with two fields: "
-            '"parsed" (string: concise human-readable interpretation using UK portion sizes) '
-            'and "kcal" (integer: calorie estimate). '
+            "You are a nutrition estimator. Given a natural language food description, "
+            "return ONLY valid JSON with these fields: "
+            '"parsed" (string: concise human-readable interpretation using UK portion sizes), '
+            '"kcal" (integer), '
+            '"carbs_g" (integer: estimated carbohydrates in grams), '
+            '"protein_g" (integer: estimated protein in grams), '
+            '"fat_g" (integer: estimated fat in grams). '
             "No preamble, no markdown, no explanation. Just the JSON object."
         ),
         messages=[{"role": "user", "content": text}],
@@ -232,6 +235,7 @@ def claude_recommend(
     activities: list[dict],
     time_of_day: str,
     wellness: dict[str, Any] | None = None,
+    macros: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Ask Claude to produce a balance recommendation."""
     act_str = (
@@ -275,17 +279,25 @@ def claude_recommend(
         direction = "up" if wellness["weight_trend_7d_kg"] > 0 else "down"
         wellness_str = f" Weight trending {direction} {abs(wellness['weight_trend_7d_kg'])}kg this week."
 
+    macros_str = ""
+    if macros and any(macros.values()):
+        macros_str = (
+            f" Diet so far: {macros.get('carbs_g', 0)}g carbs, "
+            f"{macros.get('protein_g', 0)}g protein, {macros.get('fat_g', 0)}g fat."
+        )
+
     msg = ANTHROPIC_CLIENT.messages.create(
         model="claude-sonnet-4-5",
-        max_tokens=150,
+        max_tokens=175,
         system=(
-            "You are a concise fitness and nutrition advisor for a cyclist. "
+            "You are an encouraging fitness and nutrition coach for a cyclist. "
+            "Be positive and solution-focused — offer suggestions, not criticism. "
+            "Acknowledge what's going well before flagging anything to improve. "
             "Given calorie intake, calories burned, daily target, activities, time of day, "
-            "and recovery context (sleep, HRV, weight trend), produce a short personalised recommendation. "
-            f"{activity_guidance}{wellness_str} "
+            "recovery context, and macro breakdown, give a short personalised recommendation. "
+            f"{activity_guidance}{wellness_str}{macros_str} "
             'Return ONLY valid JSON: {"status": "on_track"|"over"|"under", "recommendation": string}. '
-            "Recommendation must be 1-2 sentences max, practical, not preachy. "
-            "No markdown, no preamble."
+            "Recommendation must be 1-2 sentences max. No markdown, no preamble."
         ),
         messages=[
             {
@@ -340,6 +352,11 @@ async def log_food(req: FoodRequest, uid: str = Depends(current_user)):
     except Exception as e:
         raise HTTPException(502, f"Claude parse failed: {e}")
 
+    macros = {
+        "carbs_g": int(parsed.get("carbs_g") or 0),
+        "protein_g": int(parsed.get("protein_g") or 0),
+        "fat_g": int(parsed.get("fat_g") or 0),
+    }
     entry = {
         "id": str(uuid.uuid4()),
         "user_id": uid,
@@ -347,10 +364,13 @@ async def log_food(req: FoodRequest, uid: str = Depends(current_user)):
         "text": req.text.strip(),
         "parsed": parsed["parsed"],
         "kcal": int(parsed["kcal"]),
+        "macros_json": json.dumps(macros),
         "logged_at": datetime.now(timezone.utc).isoformat(),
     }
     insert_food_entry(entry)
-    return {k: v for k, v in entry.items() if k != "user_id"}
+    result = {k: v for k, v in entry.items() if k not in ("user_id", "macros_json")}
+    result.update(macros)
+    return result
 
 
 @app.get("/food/today")
@@ -375,6 +395,19 @@ def delete_food(entry_id: str, uid: str = Depends(current_user)):
 async def _compute_balance(uid: str) -> dict:
     entries = get_food_entries(uid, today_str())
     kcal_in = sum(e["kcal"] for e in entries)
+
+    # Aggregate macros from today's entries
+    total_carbs = total_protein = total_fat = 0
+    for e in entries:
+        m = json.loads(e.get("macros_json") or "{}")
+        total_carbs += m.get("carbs_g", 0)
+        total_protein += m.get("protein_g", 0)
+        total_fat += m.get("fat_g", 0)
+    macros_today = {
+        "carbs_g": total_carbs,
+        "protein_g": total_protein,
+        "fat_g": total_fat,
+    }
 
     profile = get_profile(uid)
     kcal_target = profile["kcal_target"]
@@ -431,6 +464,7 @@ async def _compute_balance(uid: str) -> dict:
             activities or [],
             time_of_day,
             wellness or {},
+            macros_today,
         )
     except Exception:
         net = kcal_in - kcal_burned
@@ -448,6 +482,7 @@ async def _compute_balance(uid: str) -> dict:
         "recommendation": rec["recommendation"],
         "activity_today": activities or [],
         "garmin_available": garmin is not None,
+        "macros_today": macros_today,
     }
 
 

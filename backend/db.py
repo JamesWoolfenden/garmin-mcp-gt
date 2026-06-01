@@ -81,6 +81,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             text        TEXT NOT NULL,
             parsed      TEXT NOT NULL,
             kcal        INTEGER NOT NULL,
+            macros_json TEXT,
             logged_at   TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS food_entries_user_date
@@ -101,6 +102,13 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             timezone        TEXT NOT NULL DEFAULT 'Europe/London'
         );
     """)
+    # Migration: add macros_json if it doesn't exist yet
+    try:
+        conn.execute("ALTER TABLE food_entries ADD COLUMN macros_json TEXT")
+        conn.commit()
+    except Exception:
+        pass  # column already exists
+
     conn.commit()
 
 
@@ -181,8 +189,8 @@ def delete_mcp_api_keys(user_id: str) -> None:
 
 def insert_food_entry(entry: dict) -> None:
     get_db().execute(
-        "INSERT INTO food_entries (id, user_id, date, text, parsed, kcal, logged_at) "
-        "VALUES (:id, :user_id, :date, :text, :parsed, :kcal, :logged_at)",
+        "INSERT INTO food_entries (id, user_id, date, text, parsed, kcal, macros_json, logged_at) "
+        "VALUES (:id, :user_id, :date, :text, :parsed, :kcal, :macros_json, :logged_at)",
         entry,
     )
     get_db().commit()
