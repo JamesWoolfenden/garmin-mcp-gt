@@ -31,6 +31,7 @@ dev = ["ruff", "pre-commit"]
 [project.scripts]
 garmin-mcp = "garmin_mcp:main"
 garmin-setup = "garmin_mcp:_setup"
+garmin-upload-tokens = "garmin_mcp:_upload_tokens"
 
 [project.urls]
 Homepage = "https://github.com/JamesWoolfenden/garmin-mcp-gt"

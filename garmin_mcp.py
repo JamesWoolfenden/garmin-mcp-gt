@@ -518,6 +518,57 @@ def _setup() -> None:
         print(f"Authentication failed: {e}")
 
 
+def _upload_tokens() -> None:
+    """CLI entry point: upload local Garmin tokens to a Fuel backend instance."""
+    import argparse
+    import json as _json
+    import urllib.request
+
+    parser = argparse.ArgumentParser(
+        description="Upload local Garmin tokens to a Fuel backend."
+    )
+    parser.add_argument(
+        "--token", required=True, help="Upload token from the Fuel app (Connect Garmin)"
+    )
+    parser.add_argument(
+        "--backend",
+        default="https://fuel-backend-430943803039.europe-west1.run.app",
+        help="Fuel backend URL",
+    )
+    parser.add_argument("--token-dir", default=TOKEN_DIR, help="Garmin token directory")
+    args = parser.parse_args()
+
+    token_path = Path(args.token_dir)
+    if not token_path.exists() or not any(token_path.iterdir()):
+        print(f"No tokens found in {token_path}. Run garmin-setup first.")
+        raise SystemExit(1)
+
+    tokens = {}
+    for f in token_path.iterdir():
+        try:
+            tokens[f.name] = _json.loads(f.read_text())
+        except Exception:
+            tokens[f.name] = f.read_text()
+
+    body = _json.dumps(tokens).encode()
+    req = urllib.request.Request(
+        f"{args.backend}/garmin/tokens/upload",
+        data=body,
+        headers={"X-Upload-Token": args.token, "Content-Type": "application/json"},
+        method="PUT",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            if resp.status == 200:
+                print("Garmin tokens uploaded successfully.")
+            else:
+                print(f"Upload failed: HTTP {resp.status}")
+                raise SystemExit(1)
+    except urllib.error.HTTPError as e:
+        print(f"Upload failed: HTTP {e.code} — {e.reason}")
+        raise SystemExit(1)
+
+
 def main() -> None:
     mcp.run(transport="stdio")
 
