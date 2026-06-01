@@ -81,6 +81,12 @@ resource "google_service_account_iam_member" "terraform_actAs_compute" {
   member             = "serviceAccount:${local.terraform_sa}"
 }
 
+resource "google_service_account_iam_member" "terraform_actAs_scheduler" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${local.scheduler_sa}"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${local.terraform_sa}"
+}
+
 resource "google_service_account_iam_member" "wif_deploy" {
   service_account_id = google_service_account.deploy.name
   role               = "roles/iam.workloadIdentityUser"
