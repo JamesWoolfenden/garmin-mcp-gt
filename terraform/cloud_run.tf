@@ -5,7 +5,7 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
   template {
     scaling {
       min_instance_count = 0
-      max_instance_count = 2
+      max_instance_count = 1
     }
 
     containers {
@@ -28,6 +28,11 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
       env {
         name  = "VAPID_EMAIL"
         value = var.vapid_email
+      }
+
+      env {
+        name  = "LITESTREAM_GCS_BUCKET"
+        value = google_storage_bucket.sqlite.name
       }
 
       env {

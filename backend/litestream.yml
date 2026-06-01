@@ -1,0 +1,6 @@
+dbs:
+  - path: /data/fuel.db
+    replicas:
+      - type: gcs
+        bucket: ${LITESTREAM_GCS_BUCKET}
+        path: fuel.db

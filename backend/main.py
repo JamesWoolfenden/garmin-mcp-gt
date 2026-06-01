@@ -14,21 +14,31 @@ Endpoints:
     POST /internal/nudge   (called by Cloud Scheduler)
 """
 
-import os
 import json
+import os
 import uuid
-import httpx
 from datetime import date, datetime, timezone
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from google.cloud import firestore
 import anthropic
 from pywebpush import webpush, WebPushException
 import logging
+
+from db import (
+    delete_food_entry,
+    delete_push_subscription,
+    get_food_entries,
+    get_profile,
+    get_push_subscriptions,
+    insert_food_entry,
+    upsert_profile,
+    upsert_push_subscription,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,14 +54,12 @@ app.add_middleware(
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-GARMIN_URL = os.environ["GARMIN_SIDECAR_URL"]  # https://fuel.wlfdn.dev
+GARMIN_URL = os.environ["GARMIN_SIDECAR_URL"]
 GARMIN_SECRET = os.environ["GARMIN_API_SECRET"]
 ANTHROPIC_CLIENT = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 VAPID_PRIVATE_KEY = os.environ["VAPID_PRIVATE_KEY"]
 VAPID_CLAIMS = {"sub": f"mailto:{os.environ.get('VAPID_EMAIL', 'you@example.com')}"}
-INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "")  # fallback for local dev
-
-db = firestore.Client(project="pike-477416", database="fuel")
+INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "")
 
 # Single user for now — extend to multi-user with Firebase Auth later
 USER_ID = "jim"
@@ -198,53 +206,32 @@ async def log_food(req: FoodRequest):
     except Exception as e:
         raise HTTPException(502, f"Claude parse failed: {e}")
 
-    entry_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
     entry = {
-        "id": entry_id,
+        "id": str(uuid.uuid4()),
+        "user_id": USER_ID,
+        "date": today_str(),
         "text": req.text.strip(),
         "parsed": parsed["parsed"],
         "kcal": int(parsed["kcal"]),
-        "logged_at": now,
+        "logged_at": datetime.now(timezone.utc).isoformat(),
     }
-    (
-        db.collection("users")
-        .document(USER_ID)
-        .collection("food_log")
-        .document(today_str())
-        .collection("entries")
-        .document(entry_id)
-        .set(entry)
-    )
-    return entry
+    insert_food_entry(entry)
+    return {k: v for k, v in entry.items() if k != "user_id"}
 
 
 @app.get("/food/today")
 def get_food_today():
-    entries_ref = (
-        db.collection("users")
-        .document(USER_ID)
-        .collection("food_log")
-        .document(today_str())
-        .collection("entries")
-    )
-    entries = [d.to_dict() for d in entries_ref.stream()]
-    entries.sort(key=lambda e: e.get("logged_at", ""), reverse=True)
-    total = sum(e.get("kcal", 0) for e in entries)
-    return {"entries": entries, "total_kcal": total}
+    entries = get_food_entries(USER_ID, today_str())
+    cleaned = [
+        {k: v for k, v in e.items() if k not in ("user_id", "date")} for e in entries
+    ]
+    total = sum(e["kcal"] for e in entries)
+    return {"entries": cleaned, "total_kcal": total}
 
 
 @app.delete("/food/{entry_id}")
 def delete_food(entry_id: str):
-    (
-        db.collection("users")
-        .document(USER_ID)
-        .collection("food_log")
-        .document(today_str())
-        .collection("entries")
-        .document(entry_id)
-        .delete()
-    )
+    delete_food_entry(entry_id, USER_ID)
     return {"ok": True}
 
 
@@ -256,14 +243,13 @@ async def get_balance():
     food = get_food_today()
     kcal_in = food["total_kcal"]
 
-    profile = get_profile()
+    profile = get_profile(USER_ID)
     kcal_target = profile["kcal_target"]
 
     garmin = await fetch_garmin()
     activities = await fetch_garmin_activities()
     kcal_burned = garmin["active_kcal"] if garmin else 0
 
-    # Synthesise a steps entry if no formal activities recorded
     if garmin and not activities:
         activities = [
             {
@@ -318,51 +304,23 @@ class PushSubscription(BaseModel):
 @app.post("/push/subscribe")
 def push_subscribe(sub: PushSubscription):
     sub_id = str(uuid.uuid5(uuid.NAMESPACE_URL, sub.endpoint))
-    (
-        db.collection("users")
-        .document(USER_ID)
-        .collection("push_subscriptions")
-        .document(sub_id)
-        .set(
-            {
-                "endpoint": sub.endpoint,
-                "keys": sub.keys,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
+    upsert_push_subscription(
+        sub_id,
+        USER_ID,
+        sub.endpoint,
+        sub.keys,
+        datetime.now(timezone.utc).isoformat(),
     )
     return {"ok": True}
 
 
 @app.post("/push/unsubscribe")
 def push_unsubscribe(body: dict):
-    endpoint = body.get("endpoint", "")
-    sub_id = str(uuid.uuid5(uuid.NAMESPACE_URL, endpoint))
-    (
-        db.collection("users")
-        .document(USER_ID)
-        .collection("push_subscriptions")
-        .document(sub_id)
-        .delete()
-    )
+    delete_push_subscription(body.get("endpoint", ""), USER_ID)
     return {"ok": True}
 
 
 # -- Profile ------------------------------------------------------------------
-
-DEFAULT_PROFILE = {
-    "kcal_target": 2000,
-    "nudge_times": ["08:00", "13:00", "15:00", "20:00"],
-    "timezone": "Europe/London",
-}
-
-
-@app.get("/profile")
-def get_profile() -> dict:
-    doc = db.collection("users").document(USER_ID).get()
-    if doc.exists:
-        return {**DEFAULT_PROFILE, **doc.to_dict()}
-    return DEFAULT_PROFILE
 
 
 class ProfileUpdate(BaseModel):
@@ -371,12 +329,15 @@ class ProfileUpdate(BaseModel):
     timezone: str | None = None
 
 
+@app.get("/profile")
+def get_profile_route() -> dict:
+    return get_profile(USER_ID)
+
+
 @app.put("/profile")
 def update_profile(body: ProfileUpdate):
-    db.collection("users").document(USER_ID).set(
-        {k: v for k, v in body.model_dump().items() if v is not None}, merge=True
-    )
-    return get_profile()
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    return upsert_profile(USER_ID, updates)
 
 
 # -- Internal nudge (Cloud Scheduler) ----------------------------------------
@@ -384,32 +345,21 @@ def update_profile(body: ProfileUpdate):
 
 @app.post("/internal/nudge")
 async def nudge(request: Request):
-    # Cloud Run verifies OIDC token automatically when --no-allow-unauthenticated.
-    # INTERNAL_SECRET env var used for local testing only.
     secret = request.headers.get("X-Internal-Secret", "")
     if INTERNAL_SECRET and secret != INTERNAL_SECRET:
         raise HTTPException(status_code=401)
 
     bal = await get_balance()
 
-    # Only push if something actionable
     if bal["status"] == "on_track" and bal["garmin_available"]:
         return {"pushed": False, "reason": "on track, no nudge needed"}
 
     title = "Fuel"
     body = bal["recommendation"]
 
-    subs = (
-        db.collection("users")
-        .document(USER_ID)
-        .collection("push_subscriptions")
-        .stream()
-    )
     pushed = 0
-    for doc in subs:
-        s = doc.to_dict()
-        ok = send_push({"endpoint": s["endpoint"], "keys": s["keys"]}, title, body)
-        if ok:
+    for sub in get_push_subscriptions(USER_ID):
+        if send_push({"endpoint": sub["endpoint"], "keys": sub["keys"]}, title, body):
             pushed += 1
 
     return {"pushed": pushed, "recommendation": body}
