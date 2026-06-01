@@ -45,12 +45,18 @@ resource "google_project_iam_member" "deploy_roles" {
     "roles/run.developer",
     "roles/artifactregistry.writer",
     "roles/secretmanager.secretAccessor",
-    "roles/iam.serviceAccountUser",
     "roles/firebasehosting.admin",
   ])
   project = var.project_id
   role    = each.key
   member  = "serviceAccount:${local.deploy_sa}"
+}
+
+# Scope serviceAccountUser to the specific SA used by Cloud Run (not project-wide)
+resource "google_service_account_iam_member" "deploy_actAs_compute" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${local.compute_sa}"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${local.deploy_sa}"
 }
 
 resource "google_project_iam_member" "compute_secret_access" {

@@ -4,8 +4,9 @@ resource "google_kms_key_ring" "fuel" {
 }
 
 resource "google_kms_crypto_key" "garmin_tokens" {
-  name     = "garmin-tokens"
-  key_ring = google_kms_key_ring.fuel.id
+  name            = "garmin-tokens"
+  key_ring        = google_kms_key_ring.fuel.id
+  rotation_period = "7776000s" # 90 days
 
   lifecycle {
     prevent_destroy = true
