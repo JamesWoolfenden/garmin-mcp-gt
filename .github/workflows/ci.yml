@@ -76,7 +76,7 @@ jobs:
         working-directory: terraform
 
   deploy-backend:
-    needs: [lint-and-build, test-python, test-frontend]
+    needs: [lint-and-build, test-python, test-frontend, tofu]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
