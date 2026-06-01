@@ -240,7 +240,13 @@ def claude_recommend(
     )
 
     hour = int(time_of_day.split(":")[0])
-    if hour >= 17:
+    has_workout = bool(
+        activities and any(a.get("type") not in ("walking", None) for a in activities)
+    )
+
+    if has_workout:
+        activity_guidance = "The user has already completed a workout today — do NOT suggest more exercise. Focus advice on nutrition and recovery only."
+    elif hour >= 17:
         activity_guidance = "It is too late to meaningfully change activity today — focus advice on food only."
     elif hour >= 13:
         activity_guidance = "There is still time for a short walk or evening session if activity is low."
@@ -386,7 +392,13 @@ async def _compute_balance(uid: str) -> dict:
     if isinstance(wellness, Exception):
         wellness = {}
 
-    kcal_burned = garmin["active_kcal"] if garmin else 0
+    # Prefer summing actual activity calories over the lagging get_stats figure
+    if activities:
+        kcal_burned = sum(a.get("kcal") or 0 for a in activities)
+    elif garmin:
+        kcal_burned = garmin["active_kcal"]
+    else:
+        kcal_burned = 0
 
     # Augment body battery from today stats into wellness context
     if garmin and garmin.get("body_battery"):
