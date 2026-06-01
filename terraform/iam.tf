@@ -33,6 +33,7 @@ resource "google_project_iam_member" "terraform_roles" {
     "roles/datastore.owner",
     "roles/firebasehosting.admin",
     "roles/iam.serviceAccountAdmin",
+    "roles/iam.serviceAccountUser",
   ])
   project = var.project_id
   role    = each.key
