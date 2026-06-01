@@ -240,12 +240,23 @@ def claude_recommend(
     )
 
     hour = int(time_of_day.split(":")[0])
-    has_workout = bool(
-        activities and any(a.get("type") not in ("walking", None) for a in activities)
-    )
+    workout_acts = [
+        a for a in (activities or []) if a.get("type") not in ("walking", None)
+    ]
+    total_workout_min = sum(a.get("duration_min", 0) for a in workout_acts)
 
-    if has_workout:
-        activity_guidance = "The user has already completed a workout today — do NOT suggest more exercise. Focus advice on nutrition and recovery only."
+    if total_workout_min >= 60:
+        activity_guidance = (
+            f"The user has already done {total_workout_min} minutes of structured exercise today. "
+            "Do NOT suggest more structured workouts. A short walk is fine if relevant, "
+            "but focus primarily on nutrition and recovery."
+        )
+    elif total_workout_min > 0:
+        activity_guidance = (
+            f"The user has done {total_workout_min} minutes of exercise today. "
+            "Consider whether additional light activity would help meet their target, "
+            "but don't suggest hard effort."
+        )
     elif hour >= 17:
         activity_guidance = "It is too late to meaningfully change activity today — focus advice on food only."
     elif hour >= 13:
