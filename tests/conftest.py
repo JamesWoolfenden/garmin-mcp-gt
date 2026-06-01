@@ -14,6 +14,8 @@ for mod in [
     "mcp",
     "mcp.server",
     "mcp.server.fastmcp",
+    "firebase_admin",
+    "firebase_admin.auth",
 ]:
     sys.modules.setdefault(mod, MagicMock())
 

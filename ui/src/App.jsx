@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { logFood, getTodayFood, deleteFood, getBalance } from "./lib/api";
 import { usePush } from "./hooks/usePush";
+import { useAuth } from "./hooks/useAuth";
+import { signInWithGoogle, signInWithEmail, registerWithEmail, signOutUser } from "./firebase";
 import "./App.css";
 
 function BalanceBar({ kcalIn, kcalBurned, kcalTarget }) {
@@ -75,7 +77,49 @@ function PushToggle({ pushState, onSubscribe, onUnsubscribe }) {
   );
 }
 
+function SignIn() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState("signin"); // signin | register
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleEmail = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      if (mode === "register") await registerWithEmail(email, password);
+      else await signInWithEmail(email, password);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="signin">
+      <h1 className="wordmark">fuel</h1>
+      <button className="google-btn" onClick={() => signInWithGoogle().catch(e => setError(e.message))}>
+        Sign in with Google
+      </button>
+      <div className="divider">or</div>
+      <form onSubmit={handleEmail}>
+        <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required />
+        <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
+        <button type="submit" disabled={loading}>{mode === "register" ? "Register" : "Sign in"}</button>
+      </form>
+      <button className="link-btn" onClick={() => setMode(mode === "signin" ? "register" : "signin")}>
+        {mode === "signin" ? "Create an account" : "Already have an account?"}
+      </button>
+      {error && <p className="error-banner">{error}</p>}
+    </div>
+  );
+}
+
 export default function App() {
+  const user = useAuth();
   const [input, setInput] = useState("");
   const [entries, setEntries] = useState([]);
   const [balance, setBalance] = useState(null);
@@ -94,7 +138,7 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { if (user) loadData(); }, [loadData, user]);
 
   const handleLog = async (e) => {
     e.preventDefault();
@@ -128,12 +172,18 @@ export default function App() {
 
   const totalKcal = entries.reduce((s, e) => s + e.kcal, 0);
 
+  if (user === undefined) return <div className="app"><p style={{padding:"2rem"}}>Loading…</p></div>;
+  if (user === null) return <SignIn />;
+
   return (
     <div className="app">
       <header className="header">
         <div className="header-inner">
           <span className="wordmark">fuel</span>
-          <PushToggle pushState={pushState} onSubscribe={subscribe} onUnsubscribe={unsubscribe} />
+          <div style={{display:"flex",gap:"0.5rem",alignItems:"center"}}>
+            <PushToggle pushState={pushState} onSubscribe={subscribe} onUnsubscribe={unsubscribe} />
+            <button className="push-btn" onClick={signOutUser}>Sign out</button>
+          </div>
         </div>
       </header>
 

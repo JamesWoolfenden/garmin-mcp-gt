@@ -104,6 +104,13 @@ def delete_push_subscription(endpoint: str, user_id: str) -> None:
     get_db().commit()
 
 
+def get_all_subscribed_users() -> list[str]:
+    rows = (
+        get_db().execute("SELECT DISTINCT user_id FROM push_subscriptions").fetchall()
+    )
+    return [r["user_id"] for r in rows]
+
+
 def get_push_subscriptions(user_id: str) -> list[dict]:
     rows = (
         get_db()

@@ -21,7 +21,9 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -32,6 +34,7 @@ import logging
 from db import (
     delete_food_entry,
     delete_push_subscription,
+    get_all_subscribed_users,
     get_food_entries,
     get_profile,
     get_push_subscriptions,
@@ -61,8 +64,18 @@ VAPID_PRIVATE_KEY = os.environ["VAPID_PRIVATE_KEY"]
 VAPID_CLAIMS = {"sub": f"mailto:{os.environ.get('VAPID_EMAIL', 'you@example.com')}"}
 INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "")
 
-# Single user for now — extend to multi-user with Firebase Auth later
-USER_ID = "jim"
+firebase_admin.initialize_app(options={"projectId": "pike-477416"})
+
+
+async def current_user(request: Request) -> str:
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        decoded = firebase_auth.verify_id_token(token)
+        return decoded["uid"]
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -198,7 +211,7 @@ class FoodRequest(BaseModel):
 
 
 @app.post("/food")
-async def log_food(req: FoodRequest):
+async def log_food(req: FoodRequest, uid: str = Depends(current_user)):
     if not req.text.strip():
         raise HTTPException(400, "text is required")
     try:
@@ -208,7 +221,7 @@ async def log_food(req: FoodRequest):
 
     entry = {
         "id": str(uuid.uuid4()),
-        "user_id": USER_ID,
+        "user_id": uid,
         "date": today_str(),
         "text": req.text.strip(),
         "parsed": parsed["parsed"],
@@ -220,8 +233,8 @@ async def log_food(req: FoodRequest):
 
 
 @app.get("/food/today")
-def get_food_today():
-    entries = get_food_entries(USER_ID, today_str())
+def get_food_today(uid: str = Depends(current_user)):
+    entries = get_food_entries(uid, today_str())
     cleaned = [
         {k: v for k, v in e.items() if k not in ("user_id", "date")} for e in entries
     ]
@@ -230,20 +243,19 @@ def get_food_today():
 
 
 @app.delete("/food/{entry_id}")
-def delete_food(entry_id: str):
-    delete_food_entry(entry_id, USER_ID)
+def delete_food(entry_id: str, uid: str = Depends(current_user)):
+    delete_food_entry(entry_id, uid)
     return {"ok": True}
 
 
 # -- Balance ------------------------------------------------------------------
 
 
-@app.get("/balance")
-async def get_balance():
-    food = get_food_today()
-    kcal_in = food["total_kcal"]
+async def _compute_balance(uid: str) -> dict:
+    entries = get_food_entries(uid, today_str())
+    kcal_in = sum(e["kcal"] for e in entries)
 
-    profile = get_profile(USER_ID)
+    profile = get_profile(uid)
     kcal_target = profile["kcal_target"]
 
     garmin = await fetch_garmin()
@@ -293,6 +305,11 @@ async def get_balance():
     }
 
 
+@app.get("/balance")
+async def get_balance(uid: str = Depends(current_user)):
+    return await _compute_balance(uid)
+
+
 # -- Push ---------------------------------------------------------------------
 
 
@@ -302,11 +319,11 @@ class PushSubscription(BaseModel):
 
 
 @app.post("/push/subscribe")
-def push_subscribe(sub: PushSubscription):
+def push_subscribe(sub: PushSubscription, uid: str = Depends(current_user)):
     sub_id = str(uuid.uuid5(uuid.NAMESPACE_URL, sub.endpoint))
     upsert_push_subscription(
         sub_id,
-        USER_ID,
+        uid,
         sub.endpoint,
         sub.keys,
         datetime.now(timezone.utc).isoformat(),
@@ -315,8 +332,8 @@ def push_subscribe(sub: PushSubscription):
 
 
 @app.post("/push/unsubscribe")
-def push_unsubscribe(body: dict):
-    delete_push_subscription(body.get("endpoint", ""), USER_ID)
+def push_unsubscribe(body: dict, uid: str = Depends(current_user)):
+    delete_push_subscription(body.get("endpoint", ""), uid)
     return {"ok": True}
 
 
@@ -330,14 +347,14 @@ class ProfileUpdate(BaseModel):
 
 
 @app.get("/profile")
-def get_profile_route() -> dict:
-    return get_profile(USER_ID)
+def get_profile_route(uid: str = Depends(current_user)) -> dict:
+    return get_profile(uid)
 
 
 @app.put("/profile")
-def update_profile(body: ProfileUpdate):
+def update_profile(body: ProfileUpdate, uid: str = Depends(current_user)):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    return upsert_profile(USER_ID, updates)
+    return upsert_profile(uid, updates)
 
 
 # -- Internal nudge (Cloud Scheduler) ----------------------------------------
@@ -349,17 +366,16 @@ async def nudge(request: Request):
     if INTERNAL_SECRET and secret != INTERNAL_SECRET:
         raise HTTPException(status_code=401)
 
-    bal = await get_balance()
+    pushed_total = 0
+    for uid in get_all_subscribed_users():
+        bal = await _compute_balance(uid)
+        if bal["status"] == "on_track" and bal["garmin_available"]:
+            continue
+        body = bal["recommendation"]
+        for sub in get_push_subscriptions(uid):
+            if send_push(
+                {"endpoint": sub["endpoint"], "keys": sub["keys"]}, "Fuel", body
+            ):
+                pushed_total += 1
 
-    if bal["status"] == "on_track" and bal["garmin_available"]:
-        return {"pushed": False, "reason": "on track, no nudge needed"}
-
-    title = "Fuel"
-    body = bal["recommendation"]
-
-    pushed = 0
-    for sub in get_push_subscriptions(USER_ID):
-        if send_push({"endpoint": sub["endpoint"], "keys": sub["keys"]}, title, body):
-            pushed += 1
-
-    return {"pushed": pushed, "recommendation": body}
+    return {"pushed": pushed_total}

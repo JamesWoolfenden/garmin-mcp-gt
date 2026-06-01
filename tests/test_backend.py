@@ -58,15 +58,22 @@ def test_wrong_secret_returns_401(client):
     assert resp.status_code == 401
 
 
+_balance_stub = {
+    "status": "over",
+    "recommendation": "eat less",
+    "garmin_available": False,
+    "kcal_in": 0,
+    "kcal_burned": 0,
+    "kcal_target": 2000,
+    "balance": 0,
+    "activity_today": [],
+}
+
+
 def test_correct_secret_passes_auth(client):
-    with patch.object(
-        m,
-        "get_balance",
-        return_value={
-            "status": "over",
-            "recommendation": "eat less",
-            "garmin_available": False,
-        },
+    with (
+        patch("backend.main.get_all_subscribed_users", return_value=[]),
+        patch("backend.main._compute_balance", return_value=_balance_stub),
     ):
         resp = client.post(
             "/internal/nudge", headers={"X-Internal-Secret": "correct-secret"}
@@ -78,14 +85,9 @@ def test_no_internal_secret_allows_all(client):
     original = m.INTERNAL_SECRET
     m.INTERNAL_SECRET = ""
     try:
-        with patch.object(
-            m,
-            "get_balance",
-            return_value={
-                "status": "over",
-                "recommendation": "eat less",
-                "garmin_available": False,
-            },
+        with (
+            patch("backend.main.get_all_subscribed_users", return_value=[]),
+            patch("backend.main._compute_balance", return_value=_balance_stub),
         ):
             resp = client.post("/internal/nudge")
         assert resp.status_code != 401

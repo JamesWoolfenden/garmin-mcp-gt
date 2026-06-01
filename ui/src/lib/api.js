@@ -1,8 +1,15 @@
+import { getIdToken } from "../firebase";
+
 const BASE = import.meta.env.VITE_API_URL || "";
 
 async function req(path, opts = {}) {
+  const token = await getIdToken();
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...opts.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...opts.headers,
+    },
     ...opts,
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
