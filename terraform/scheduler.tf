@@ -1,7 +1,3 @@
-locals {
-  nudge_hours = [8, 13, 15, 20]
-}
-
 resource "google_cloud_scheduler_job" "nudge" {
   for_each = toset([for h in local.nudge_hours : tostring(h)])
 

@@ -23,6 +23,3 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   }
 }
 
-output "wif_provider" {
-  value = "projects/${data.google_project.project.number}/locations/global/workloadIdentityPools/${google_iam_workload_identity_pool.github.workload_identity_pool_id}/providers/${google_iam_workload_identity_pool_provider.github.workload_identity_pool_provider_id}"
-}

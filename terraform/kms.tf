@@ -13,8 +13,8 @@ resource "google_kms_crypto_key" "garmin_tokens" {
   }
 }
 
-resource "google_kms_crypto_key_iam_member" "compute_encrypter" {
+resource "google_kms_crypto_key_iam_member" "backend_encrypter" {
   crypto_key_id = google_kms_crypto_key.garmin_tokens.id
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
-  member        = "serviceAccount:${local.compute_sa}"
+  member        = "serviceAccount:${google_service_account.fuel_backend.email}"
 }

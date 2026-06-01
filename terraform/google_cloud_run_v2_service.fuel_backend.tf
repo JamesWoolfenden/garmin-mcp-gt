@@ -3,6 +3,8 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
   location = var.region
 
   template {
+    service_account = google_service_account.fuel_backend.email
+
     scaling {
       min_instance_count = 0
       max_instance_count = 1
@@ -83,7 +85,7 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
   lifecycle {
     ignore_changes = [
       template[0].containers[0].image, # managed by CI
-      client,                           # set by gcloud, not Terraform
+      client,                          # set by gcloud, not Terraform
       client_version,
     ]
   }

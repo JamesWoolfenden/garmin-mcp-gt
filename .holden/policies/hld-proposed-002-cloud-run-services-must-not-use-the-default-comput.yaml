@@ -1,0 +1,17 @@
+id: HLD_PROPOSED_002
+name: Cloud Run services must not use the default Compute Engine service account
+principle: identity-and-access
+severity: MEDIUM
+rationale: |
+  The default Compute Engine service account inherits project-level IAM bindings
+  accumulated over time and is shared across all resources that do not specify
+  a dedicated SA. Cloud Run services using this account gain far more permissions
+  than needed, increasing blast radius if the application is compromised.
+remediation: |
+  Create a dedicated google_service_account for the Cloud Run service and
+  reference it in template.service_account. Grant only the specific roles
+  the application requires.
+resources:
+  google_cloud_run_v2_service:
+    not_contains:
+      template.service_account: compute@developer.gserviceaccount.com

@@ -9,11 +9,15 @@ resource "google_storage_bucket" "sqlite" {
     enabled = true
   }
 
+  encryption {
+    default_kms_key_name = google_kms_crypto_key.garmin_tokens.id
+  }
+
   #checkov:skip=CKV_GCP_62: Access logging not required for personal project state bucket
 }
 
-resource "google_storage_bucket_iam_member" "sqlite_compute" {
+resource "google_storage_bucket_iam_member" "sqlite_backend" {
   bucket = google_storage_bucket.sqlite.name
   role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${local.compute_sa}"
+  member = "serviceAccount:${google_service_account.fuel_backend.email}"
 }
