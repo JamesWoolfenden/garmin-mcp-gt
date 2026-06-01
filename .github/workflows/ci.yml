@@ -55,7 +55,7 @@ jobs:
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-          service_account: ${{ secrets.DEPLOY_SA }}
+          service_account: ${{ secrets.TERRAFORM_SA }}
       - uses: google-github-actions/setup-gcloud@v2
       - name: Get internal secret
         id: secret
