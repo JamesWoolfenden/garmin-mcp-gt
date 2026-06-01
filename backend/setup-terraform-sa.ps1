@@ -44,7 +44,10 @@ $roleBody = @{
     "secretmanager.secrets.get", "secretmanager.secrets.update",
     "serviceusage.services.disable", "serviceusage.services.enable",
     "serviceusage.services.get", "serviceusage.services.list",
-    "storage.buckets.get", "storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy",
+    "storage.buckets.create", "storage.buckets.delete",
+    "storage.buckets.get", "storage.buckets.getIamPolicy",
+    "storage.buckets.list", "storage.buckets.setIamPolicy",
+    "storage.buckets.update",
     "storage.objects.create", "storage.objects.delete",
     "storage.objects.get", "storage.objects.list"
   )
