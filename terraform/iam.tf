@@ -75,6 +75,12 @@ resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
   member   = "allUsers"
 }
 
+resource "google_service_account_iam_member" "terraform_actAs_compute" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${local.compute_sa}"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${local.terraform_sa}"
+}
+
 resource "google_service_account_iam_member" "wif_deploy" {
   service_account_id = google_service_account.deploy.name
   role               = "roles/iam.workloadIdentityUser"
