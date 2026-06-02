@@ -24,18 +24,20 @@ class TestClaudeParseFood:
 
     def test_clean_json(self):
         self.mock_client.messages.create.return_value = _make_message(
-            '{"parsed": "bowl of porridge", "kcal": 350}'
+            '{"parsed": "bowl of porridge", "kcal": 350, "carbs_g": 60, "protein_g": 10, "fat_g": 5}'
         )
         result = m.claude_parse_food("porridge")
         assert result["kcal"] == 350
         assert result["parsed"] == "bowl of porridge"
+        assert result["carbs_g"] == 60
 
     def test_markdown_wrapped_json(self):
         self.mock_client.messages.create.return_value = _make_message(
-            '```json\n{"parsed": "banana", "kcal": 90}\n```'
+            '```json\n{"parsed": "banana", "kcal": 90, "carbs_g": 23, "protein_g": 1, "fat_g": 0}\n```'
         )
         result = m.claude_parse_food("banana")
         assert result["kcal"] == 90
+        assert result["carbs_g"] == 23
 
     def test_invalid_json_raises(self):
         self.mock_client.messages.create.return_value = _make_message(

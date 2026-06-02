@@ -106,8 +106,9 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     try:
         conn.execute("ALTER TABLE food_entries ADD COLUMN macros_json TEXT")
         conn.commit()
-    except Exception:
-        pass  # column already exists
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e):
+            raise
 
     conn.commit()
 

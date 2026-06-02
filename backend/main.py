@@ -160,7 +160,7 @@ def claude_parse_food(text: str) -> dict[str, Any]:
     """Ask Claude to parse a natural language food description into kcal and macros."""
     msg = ANTHROPIC_CLIENT.messages.create(
         model="claude-sonnet-4-5",
-        max_tokens=250,
+        max_tokens=350,
         system=(
             "You are a nutrition estimator. Given a natural language food description, "
             "return ONLY valid JSON with these fields: "
@@ -399,7 +399,10 @@ async def _compute_balance(uid: str) -> dict:
     # Aggregate macros from today's entries
     total_carbs = total_protein = total_fat = 0
     for e in entries:
-        m = json.loads(e.get("macros_json") or "{}")
+        raw = e.get("macros_json") or "{}"
+        m = json.loads(raw)
+        if not isinstance(m, dict):
+            m = {}
         total_carbs += m.get("carbs_g", 0)
         total_protein += m.get("protein_g", 0)
         total_fat += m.get("fat_g", 0)
