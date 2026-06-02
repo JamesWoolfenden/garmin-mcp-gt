@@ -259,7 +259,27 @@ function GarminConnect() {
   );
 }
 
-function SignIn({ accessDenied }) {
+function AccessDenied() {
+  return (
+    <div className="signin">
+      <h1 className="wordmark">fuel</h1>
+      <div style={{textAlign:"center",maxWidth:"280px"}}>
+        <p style={{fontSize:"18px",fontWeight:600,color:"var(--text)",marginBottom:"10px"}}>Access denied</p>
+        <p style={{fontSize:"14px",color:"var(--muted)",lineHeight:1.6}}>
+          This app is invite-only. Your account isn't on the access list.
+        </p>
+        <p style={{fontSize:"13px",color:"var(--muted)",marginTop:"16px"}}>
+          If you think this is a mistake, contact the app owner.
+        </p>
+      </div>
+      <button className="push-btn" onClick={() => { signOutUser(); window.location.reload(); }}>
+        Sign out
+      </button>
+    </div>
+  );
+}
+
+function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState("signin"); // signin | register
@@ -283,11 +303,6 @@ function SignIn({ accessDenied }) {
   return (
     <div className="signin">
       <h1 className="wordmark">fuel</h1>
-      {accessDenied && (
-        <p style={{fontSize:"13px",color:"var(--over)",textAlign:"center",maxWidth:"280px"}}>
-          This app is invite-only. Your account doesn't have access.
-        </p>
-      )}
       <button className="google-btn" onClick={() => signInWithGoogle().catch(e => setError(e.message))}>
         Sign in with Google
       </button>
@@ -366,7 +381,8 @@ export default function App() {
   const totalKcal = entries.reduce((s, e) => s + e.kcal, 0);
 
   if (user === undefined) return <div className="app"><p style={{padding:"2rem"}}>Loading…</p></div>;
-  if (user === null) return <SignIn accessDenied={accessDenied} />;
+  if (accessDenied) return <AccessDenied />;
+  if (user === null) return <SignIn />;
 
   return (
     <div className="app">
