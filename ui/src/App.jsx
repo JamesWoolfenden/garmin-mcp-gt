@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { logFood, getTodayFood, deleteFood, getBalance, sendChat, createGarminUploadToken, getProfile, updateProfile } from "./lib/api";
+import { logFood, deleteFood, getBalance, sendChat, createGarminUploadToken, getProfile, updateProfile } from "./lib/api";
 import { usePush } from "./hooks/usePush";
 import { useAuth } from "./hooks/useAuth";
 import { signInWithGoogle, signInWithEmail, registerWithEmail, signOutUser } from "./firebase";
@@ -137,11 +137,14 @@ function Settings() {
   const [saved, setSaved] = useState(null);
 
   useEffect(() => {
+    let cancelled = false;
     getProfile().then(p => {
+      if (cancelled) return;
       setKcalTarget(String(p.kcal_target || 2000));
       setNudgeTimes((p.nudge_times || []).join(", "));
       setSaved({ kcal_target: p.kcal_target, nudge_times: p.nudge_times });
     }).catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   const save = async (e) => {
@@ -310,8 +313,8 @@ export default function App() {
 
   const loadData = useCallback(async () => {
     try {
-      const [food, bal] = await Promise.all([getTodayFood(), getBalance()]);
-      setEntries(food.entries);
+      const bal = await getBalance();
+      setEntries(bal.entries || []);
       setBalance(bal);
     } catch (e) {
       setError("Could not load data");
@@ -326,10 +329,10 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const entry = await logFood(input.trim());
-      setEntries(prev => [entry, ...prev]);
+      await logFood(input.trim());
       setInput("");
       const bal = await getBalance();
+      setEntries(bal.entries || []);
       setBalance(bal);
     } catch (e) {
       setError("Failed to log — try again");
@@ -342,8 +345,8 @@ export default function App() {
   const handleDelete = async (id) => {
     try {
       await deleteFood(id);
-      setEntries(prev => prev.filter(e => e.id !== id));
       const bal = await getBalance();
+      setEntries(bal.entries || []);
       setBalance(bal);
     } catch (e) {
       setError("Could not remove entry");

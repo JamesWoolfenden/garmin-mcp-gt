@@ -476,6 +476,10 @@ async def _compute_balance(uid: str) -> dict:
             "recommendation": "Activity data unavailable — estimate based on food only.",
         }
 
+    food_entries_clean = [
+        {k: v for k, v in e.items() if k not in ("user_id", "date", "macros_json")}
+        for e in entries
+    ]
     return {
         "kcal_in": kcal_in,
         "kcal_burned": kcal_burned,
@@ -486,6 +490,8 @@ async def _compute_balance(uid: str) -> dict:
         "activity_today": activities or [],
         "garmin_available": garmin is not None,
         "macros_today": macros_today,
+        "entries": food_entries_clean,
+        "total_kcal": kcal_in,
     }
 
 
