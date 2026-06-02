@@ -259,7 +259,7 @@ function GarminConnect() {
   );
 }
 
-function SignIn() {
+function SignIn({ accessDenied }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState("signin"); // signin | register
@@ -283,6 +283,11 @@ function SignIn() {
   return (
     <div className="signin">
       <h1 className="wordmark">fuel</h1>
+      {accessDenied && (
+        <p style={{fontSize:"13px",color:"var(--over)",textAlign:"center",maxWidth:"280px"}}>
+          This app is invite-only. Your account doesn't have access.
+        </p>
+      )}
       <button className="google-btn" onClick={() => signInWithGoogle().catch(e => setError(e.message))}>
         Sign in with Google
       </button>
@@ -302,6 +307,7 @@ function SignIn() {
 
 export default function App() {
   const user = useAuth();
+  const [accessDenied, setAccessDenied] = useState(false);
   const [tab, setTab] = useState("food"); // food | chat
   const [input, setInput] = useState("");
   const [entries, setEntries] = useState([]);
@@ -317,7 +323,11 @@ export default function App() {
       setEntries(bal.entries || []);
       setBalance(bal);
     } catch (e) {
-      setError("Could not load data");
+      if (e.message === "ACCESS_DENIED") {
+        setAccessDenied(true);
+      } else {
+        setError("Could not load data");
+      }
     }
   }, []);
 
@@ -356,7 +366,7 @@ export default function App() {
   const totalKcal = entries.reduce((s, e) => s + e.kcal, 0);
 
   if (user === undefined) return <div className="app"><p style={{padding:"2rem"}}>Loading…</p></div>;
-  if (user === null) return <SignIn />;
+  if (user === null) return <SignIn accessDenied={accessDenied} />;
 
   return (
     <div className="app">

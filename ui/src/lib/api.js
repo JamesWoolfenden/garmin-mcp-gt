@@ -12,6 +12,12 @@ async function req(path, opts = {}) {
     },
     ...opts,
   });
+  if (res.status === 403) {
+    // Sign out and surface a clear message rather than leaving a broken state
+    const { signOutUser } = await import("../firebase");
+    await signOutUser();
+    throw new Error("ACCESS_DENIED");
+  }
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return res.json();
 }
