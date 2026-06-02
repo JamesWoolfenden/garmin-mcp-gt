@@ -132,65 +132,77 @@ function Chat() {
 function Settings() {
   const [kcalTarget, setKcalTarget] = useState("");
   const [nudgeTimes, setNudgeTimes] = useState("");
-  const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [saved, setSaved] = useState(null);
 
   useEffect(() => {
     getProfile().then(p => {
       setKcalTarget(String(p.kcal_target || 2000));
       setNudgeTimes((p.nudge_times || []).join(", "));
+      setSaved({ kcal_target: p.kcal_target, nudge_times: p.nudge_times });
     }).catch(() => {});
   }, []);
 
   const save = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setStatus(null);
     try {
       const times = nudgeTimes.split(",").map(t => t.trim()).filter(Boolean);
       await updateProfile({ kcal_target: parseInt(kcalTarget), nudge_times: times });
-      setStatus("Saved");
+      setSaved({ kcal_target: parseInt(kcalTarget), nudge_times: times });
+      setOpen(false);
     } catch {
-      setStatus("Save failed");
+      // leave open on error
     } finally {
       setLoading(false);
-      setTimeout(() => setStatus(null), 2000);
     }
   };
 
   return (
     <div style={{padding:"16px 20px",borderTop:"1px solid var(--border)"}}>
-      <p style={{fontSize:"13px",color:"var(--muted)",marginBottom:"12px",fontWeight:500}}>Settings</p>
-      <form onSubmit={save} style={{display:"flex",flexDirection:"column",gap:"10px"}}>
-        <label style={{fontSize:"13px",color:"var(--text)"}}>
-          Daily kcal target
-          <input
-            className="log-input"
-            type="number"
-            value={kcalTarget}
-            onChange={e => setKcalTarget(e.target.value)}
-            style={{display:"block",width:"100%",marginTop:"4px"}}
-            min="500" max="6000"
-          />
-        </label>
-        <label style={{fontSize:"13px",color:"var(--text)"}}>
-          Nudge times (comma-separated, e.g. 08:00, 13:00)
-          <input
-            className="log-input"
-            type="text"
-            value={nudgeTimes}
-            onChange={e => setNudgeTimes(e.target.value)}
-            style={{display:"block",width:"100%",marginTop:"4px"}}
-            placeholder="08:00, 13:00, 15:00, 20:00"
-          />
-        </label>
-        <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div>
+          <p style={{fontSize:"13px",color:"var(--muted)",fontWeight:500}}>Settings</p>
+          {saved && !open && (
+            <p style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px"}}>
+              {saved.kcal_target} kcal · nudges {(saved.nudge_times || []).join(", ")}
+            </p>
+          )}
+        </div>
+        <button className="push-btn" onClick={() => setOpen(o => !o)}>
+          {open ? "Cancel" : "Edit"}
+        </button>
+      </div>
+      {open && (
+        <form onSubmit={save} style={{display:"flex",flexDirection:"column",gap:"10px",marginTop:"12px"}}>
+          <label style={{fontSize:"13px",color:"var(--text)"}}>
+            Daily kcal target
+            <input
+              className="log-input"
+              type="number"
+              value={kcalTarget}
+              onChange={e => setKcalTarget(e.target.value)}
+              style={{display:"block",width:"100%",marginTop:"4px"}}
+              min="500" max="6000"
+            />
+          </label>
+          <label style={{fontSize:"13px",color:"var(--text)"}}>
+            Nudge times (comma-separated)
+            <input
+              className="log-input"
+              type="text"
+              value={nudgeTimes}
+              onChange={e => setNudgeTimes(e.target.value)}
+              style={{display:"block",width:"100%",marginTop:"4px"}}
+              placeholder="08:00, 13:00, 15:00, 20:00"
+            />
+          </label>
           <button className="log-btn" type="submit" disabled={loading}>
             {loading ? "Saving…" : "Save"}
           </button>
-          {status && <span style={{fontSize:"13px",color:"var(--ok)"}}>{status}</span>}
-        </div>
-      </form>
+        </form>
+      )}
     </div>
   );
 }
