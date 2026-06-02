@@ -93,7 +93,8 @@ function Chat() {
     setMessages(prev => [...prev, { role: "user", text }]);
     setLoading(true);
     try {
-      const { response } = await sendChat(text);
+      const history = messages.slice(-10).map(m => ({ role: m.role, text: m.text }));
+      const { response } = await sendChat(text, history);
       setMessages(prev => [...prev, { role: "assistant", text: response }]);
     } catch {
       setMessages(prev => [...prev, { role: "assistant", text: "Sorry, something went wrong." }]);

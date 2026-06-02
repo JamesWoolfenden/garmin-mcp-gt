@@ -819,8 +819,14 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
             return {"error": f"Unknown tool: {tool_name}"}
 
 
+class ChatMessage(BaseModel):
+    role: str
+    text: str
+
+
 class ChatRequest(BaseModel):
     message: str
+    history: list[ChatMessage] = []
 
 
 @app.post("/chat")
@@ -836,7 +842,12 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
         f"sleep, heart rate, or fitness data."
     )
 
-    messages = [{"role": "user", "content": req.message}]
+    # Build messages with history (last 10 turns) for conversational context
+    messages = []
+    for h in req.history[-10:]:
+        role = h.role if h.role in ("user", "assistant") else "user"
+        messages.append({"role": role, "content": h.text})
+    messages.append({"role": "user", "content": req.message})
 
     # Agentic tool use loop
     for _ in range(5):  # max 5 tool call rounds
