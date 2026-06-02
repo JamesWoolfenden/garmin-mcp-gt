@@ -47,7 +47,9 @@ from db import (
     get_user_for_mcp_key,
     insert_food_entry,
     list_registered_users,
+    load_chat_history,
     register_user,
+    save_chat_message,
     save_garmin_tokens,
     upsert_mcp_api_key,
     upsert_profile,
@@ -829,6 +831,11 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = []
 
 
+@app.get("/chat/history")
+def get_chat_history(uid: str = Depends(current_user)):
+    return load_chat_history(uid)
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest, uid: str = Depends(current_user)):
     if not req.message.strip():
@@ -863,6 +870,9 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
 
         if response.stop_reason == "end_turn":
             text = next((b.text for b in response.content if hasattr(b, "text")), "")
+            # Persist to encrypted chat history
+            await run_in_threadpool(save_chat_message, uid, "user", req.message)
+            await run_in_threadpool(save_chat_message, uid, "assistant", text)
             return {"response": text}
 
         if response.stop_reason != "tool_use":

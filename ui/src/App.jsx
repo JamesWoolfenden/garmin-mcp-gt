@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { logFood, deleteFood, getBalance, sendChat, createGarminUploadToken, getProfile, updateProfile } from "./lib/api";
+import { logFood, deleteFood, getBalance, sendChat, getChatHistory, createGarminUploadToken, getProfile, updateProfile } from "./lib/api";
 import { usePush } from "./hooks/usePush";
 import { useAuth } from "./hooks/useAuth";
 import { signInWithGoogle, signInWithEmail, registerWithEmail, signOutUser } from "./firebase";
@@ -84,6 +84,14 @@ function Chat() {
   const bottomRef = useRef(null);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getChatHistory().then(history => {
+      if (!cancelled && history.length > 0) setMessages(history);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const send = async (e) => {
     e.preventDefault();

@@ -107,6 +107,16 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             email       TEXT NOT NULL,
             registered_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id          TEXT PRIMARY KEY,
+            user_id     TEXT NOT NULL,
+            role        TEXT NOT NULL,
+            content_enc TEXT NOT NULL,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS chat_history_user_time
+            ON chat_history(user_id, created_at);
     """)
     # Migration: add macros_json if it doesn't exist yet
     try:
@@ -117,6 +127,46 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             raise
 
     conn.commit()
+
+
+# ── Chat history (KMS-encrypted) ─────────────────────────────────────────────
+
+
+def save_chat_message(user_id: str, role: str, content: str) -> None:
+    import uuid
+
+    get_db().execute(
+        "INSERT INTO chat_history (id, user_id, role, content_enc, created_at) VALUES (?, ?, ?, ?, ?)",
+        (
+            str(uuid.uuid4()),
+            user_id,
+            role,
+            _encrypt(content),
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    get_db().commit()
+
+
+def load_chat_history(user_id: str, limit: int = 40) -> list[dict]:
+    rows = (
+        get_db()
+        .execute(
+            "SELECT role, content_enc, created_at FROM chat_history "
+            "WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        )
+        .fetchall()
+    )
+    # Return in chronological order with content decrypted
+    return [
+        {
+            "role": r["role"],
+            "text": _decrypt(r["content_enc"]),
+            "created_at": r["created_at"],
+        }
+        for r in reversed(rows)
+    ]
 
 
 # ── Registered users ─────────────────────────────────────────────────────────

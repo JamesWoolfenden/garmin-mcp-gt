@@ -39,4 +39,5 @@ export const sendChat = (message, history = []) => req("/chat", {
   method: "POST",
   body: JSON.stringify({ message, history }),
 });
+export const getChatHistory = () => req("/chat/history");
 export const createGarminUploadToken = () => req("/garmin/upload-token", { method: "POST" });
