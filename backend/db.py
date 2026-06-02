@@ -101,6 +101,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             nudge_times     TEXT NOT NULL DEFAULT '["08:00","13:00","15:00","20:00"]',
             timezone        TEXT NOT NULL DEFAULT 'Europe/London'
         );
+
+        CREATE TABLE IF NOT EXISTS registered_users (
+            user_id     TEXT PRIMARY KEY,
+            email       TEXT NOT NULL,
+            registered_at TEXT NOT NULL
+        );
     """)
     # Migration: add macros_json if it doesn't exist yet
     try:
@@ -111,6 +117,33 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             raise
 
     conn.commit()
+
+
+# ── Registered users ─────────────────────────────────────────────────────────
+
+
+def register_user(user_id: str, email: str) -> None:
+    get_db().execute(
+        "INSERT OR IGNORE INTO registered_users (user_id, email, registered_at) VALUES (?, ?, ?)",
+        (user_id, email, datetime.now(timezone.utc).isoformat()),
+    )
+    get_db().commit()
+
+
+def list_registered_users() -> list[dict]:
+    rows = (
+        get_db()
+        .execute(
+            "SELECT user_id, email, registered_at FROM registered_users ORDER BY registered_at DESC"
+        )
+        .fetchall()
+    )
+    return [dict(r) for r in rows]
+
+
+def delete_registered_user(user_id: str) -> None:
+    get_db().execute("DELETE FROM registered_users WHERE user_id=?", (user_id,))
+    get_db().commit()
 
 
 # ── Garmin tokens ────────────────────────────────────────────────────────────

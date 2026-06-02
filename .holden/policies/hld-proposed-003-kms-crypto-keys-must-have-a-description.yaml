@@ -1,0 +1,16 @@
+id: HLD_PROPOSED_003
+name: KMS crypto keys must have a description
+principle: governance
+severity: LOW
+rationale: |
+  KMS keys without descriptions are indistinguishable in audit logs, billing
+  reports, and the GCP console. When multiple keys exist in a project, operators
+  must cross-reference Terraform source to determine which key encrypts which
+  data class. A description field provides inline context at the point of use.
+remediation: |
+  Add a description = "..." field to the google_kms_crypto_key resource
+  explaining what data this key protects and in which environment.
+resources:
+  google_kms_crypto_key:
+    not_null:
+      description: true

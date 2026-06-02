@@ -29,3 +29,17 @@ resource "google_secret_manager_secret" "internal_secret" {
   }
 }
 
+resource "google_secret_manager_secret" "allowed_emails" {
+  secret_id = "fuel-allowed-emails"
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret" "admin_uid" {
+  secret_id = "fuel-admin-uid"
+  replication {
+    auto {}
+  }
+}
+

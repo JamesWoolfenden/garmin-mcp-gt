@@ -77,6 +77,26 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
         }
       }
 
+      env {
+        name = "ALLOWED_EMAILS"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.allowed_emails.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "ADMIN_UID"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.admin_uid.secret_id
+            version = "latest"
+          }
+        }
+      }
+
     }
 
     timeout = "30s"

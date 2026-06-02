@@ -39,12 +39,15 @@ from db import (
     delete_food_entry,
     delete_push_subscription,
     delete_mcp_api_keys,
+    delete_registered_user,
     get_all_subscribed_users,
     get_food_entries,
     get_profile,
     get_push_subscriptions,
     get_user_for_mcp_key,
     insert_food_entry,
+    list_registered_users,
+    register_user,
     save_garmin_tokens,
     upsert_mcp_api_key,
     upsert_profile,
@@ -72,6 +75,12 @@ ANTHROPIC_CLIENT = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 VAPID_PRIVATE_KEY = os.environ["VAPID_PRIVATE_KEY"]
 VAPID_CLAIMS = {"sub": f"mailto:{os.environ.get('VAPID_EMAIL', 'you@example.com')}"}
 INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "")
+ADMIN_UID = os.environ.get("ADMIN_UID", "")
+_ALLOWED_EMAILS: set[str] = {
+    e.strip().lower()
+    for e in os.environ.get("ALLOWED_EMAILS", "").split(",")
+    if e.strip()
+}
 
 firebase_admin.initialize_app(options={"projectId": "pike-477416"})
 
@@ -82,9 +91,24 @@ async def current_user(request: Request) -> str:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         decoded = firebase_auth.verify_id_token(token)
-        return decoded["uid"]
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+    uid = decoded["uid"]
+    email = (decoded.get("email") or "").lower()
+
+    if _ALLOWED_EMAILS and email not in _ALLOWED_EMAILS:
+        raise HTTPException(status_code=403, detail="Access not permitted")
+
+    # Record registration on first seen
+    register_user(uid, email)
+    return uid
+
+
+async def admin_user(uid: str = Depends(current_user)) -> str:
+    if not ADMIN_UID or uid != ADMIN_UID:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return uid
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -603,6 +627,26 @@ def generate_mcp_key(uid: str = Depends(current_user)):
     delete_mcp_api_keys(uid)  # revoke any existing key
     upsert_mcp_api_key(key_hash, uid)
     return {"key": raw_key}
+
+
+# -- Admin -------------------------------------------------------------------
+
+
+@app.get("/admin/users")
+def admin_list_users(uid: str = Depends(admin_user)):
+    """List all registered users."""
+    return list_registered_users()
+
+
+@app.delete("/admin/users/{target_uid}")
+def admin_delete_user(target_uid: str, uid: str = Depends(admin_user)):
+    """Disable a user's Firebase account and remove their profile."""
+    try:
+        firebase_auth.update_user(target_uid, disabled=True)
+    except Exception as e:
+        logger.warning(f"Could not disable Firebase user {target_uid}: {e}")
+    delete_registered_user(target_uid)
+    return {"ok": True, "uid": target_uid}
 
 
 # -- Internal nudge (Cloud Scheduler) ----------------------------------------

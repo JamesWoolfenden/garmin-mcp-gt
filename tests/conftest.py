@@ -26,3 +26,5 @@ os.environ.setdefault("GARMIN_API_SECRET", "test-secret")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 os.environ.setdefault("VAPID_PRIVATE_KEY", "test-vapid")
 os.environ.setdefault("INTERNAL_SECRET", "correct-secret")
+os.environ.setdefault("ALLOWED_EMAILS", "")  # empty = open access in tests
+os.environ.setdefault("ADMIN_UID", "test-admin-uid")
