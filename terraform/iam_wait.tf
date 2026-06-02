@@ -3,7 +3,7 @@
 # new SA, and the container fails to start because the bindings haven't
 # propagated yet.
 resource "time_sleep" "iam_propagation" {
-  create_duration = "90s"
+  create_duration = "120s"
 
   depends_on = [
     google_project_iam_member.backend_secret_access,

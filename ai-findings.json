@@ -1,79 +1,49 @@
 {
   "findings": [
     {
-      "id": "HOLDEN_AI_001",
-      "principle": "encryption",
-      "severity": "MEDIUM",
-      "confidence": "high",
-      "title": "KMS key created for Garmin tokens but SQLite bucket (health/food data) uses Google-managed keys",
-      "file": "terraform/sqlite.tf",
-      "line": 1,
-      "resource": "google_storage_bucket.sqlite",
-      "related_resources": ["google_kms_crypto_key.garmin_tokens"],
-      "explanation": "A KMS crypto key (`fuel/garmin-tokens`) exists and the compute SA has `cryptoKeyEncrypterDecrypter` on it, but the SQLite GCS bucket — which stores food logs, user profiles, push subscriptions, and macro data via Litestream — uses Google-managed encryption. Garmin session tokens are CMEK-encrypted while the user's daily calorie and health data is not. This is an encryption inconsistency: the less sensitive credential gets CMEK treatment, the richer personal data does not. Holden flagged the absence of logging on the bucket but not the missing CMEK configuration.",
-      "remediation": "Add `encryption { default_kms_key_name = google_kms_crypto_key.garmin_tokens.id }` to `google_storage_bucket.sqlite` and grant the compute SA `cloudkms.cryptoKeyEncrypterDecrypter` on the key (already granted). Alternatively create a separate `fuel/sqlite-data` crypto key to keep key scopes distinct."
-    },
-    {
-      "id": "HOLDEN_AI_002",
-      "principle": "data-protection",
+      "id": "HOLDEN_AI_006",
+      "principle": "identity-and-access",
       "severity": "HIGH",
       "confidence": "high",
-      "title": "`internal_secret` fetched into a GitHub Actions step output then injected into Scheduler job header — exposed in CI logs",
-      "file": ".github/workflows/ci.yml",
-      "line": 62,
-      "resource": "gha_step.tofu.get-internal-secret",
-      "related_resources": ["google_cloud_scheduler_job.nudge"],
-      "explanation": "The `tofu` CI job runs `gcloud secrets versions access ... >> $GITHUB_OUTPUT` (line 62), storing `fuel-internal-secret` in a step output. Step outputs in GitHub Actions are readable by any subsequent step in the same job and appear in the Actions UI under 'Set output' if not masked. The value is then passed as `-var=\"internal_secret=...\"` to `tofu apply`, where it ends up in the Cloud Scheduler job `X-Internal-Secret` header. The Scheduler resource has `lifecycle { ignore_changes = [http_target[0].headers] }` meaning Terraform won't detect if this header is modified or exposed. Holden has no rule spanning CI pipeline → Terraform variable → GCP resource header.",
-      "remediation": "Mask the output immediately: pipe `gcloud secrets versions access` through `| tr -d '\\n' >> $GITHUB_OUTPUT` and prepend `::add-mask::` to prevent logging. Better: remove the secret header from Scheduler entirely and rely solely on OIDC tokens (requires setting Cloud Run to `--no-allow-unauthenticated` for the nudge endpoint, or verifying the OIDC token in the app)."
+      "title": "Transitional compute SA secret binding has no removal enforcement — will silently undermine SA segregation",
+      "file": "terraform/iam.tf",
+      "line": 38,
+      "resource": "google_project_iam_member.compute_secret_access",
+      "related_resources": ["google_project_iam_member.backend_secret_access", "google_service_account.fuel_backend"],
+      "explanation": "This binding was re-added to bridge the Cloud Run SA migration and is explicitly documented as temporary. However, a comment is the only guard — there is no Terraform mechanism (variable gate, lifecycle rule, or expiry condition) to enforce removal. The entire purpose of HOLDEN_AI_005 (creating a dedicated fuel-backend SA) was to eliminate the compute SA's access to secrets; leaving this binding in place permanently defeats that fix. Comments rot; code doesn't.",
+      "remediation": "Add a boolean variable `var.compute_sa_secret_access_enabled` defaulting to `false` with `count = var.compute_sa_secret_access_enabled ? 1 : 0` on the resource. Set it to `true` in tfvars only during the migration window, forcing an explicit decision to keep or remove it on every apply. Alternatively, remove it now — the fuel-backend SA is deployed and serving traffic."
     },
     {
-      "id": "HOLDEN_AI_003",
-      "principle": "backup-and-recovery",
+      "id": "HOLDEN_AI_007",
+      "principle": "reliability",
       "severity": "MEDIUM",
-      "confidence": "high",
-      "title": "Firestore database deletion protected only by Terraform lifecycle, not GCP API-level deletion protection",
-      "file": "terraform/firestore.tf",
+      "confidence": "medium",
+      "title": "`time_sleep` of 90s has no buffer above GCP's documented 120s maximum IAM propagation window",
+      "file": "terraform/iam_wait.tf",
       "line": 1,
-      "resource": "google_firestore_database.fuel",
-      "related_resources": [],
-      "explanation": "`prevent_destroy = true` in the Terraform lifecycle prevents `tofu destroy` from deleting the database, but it does not prevent a GCP console user or `gcloud firestore databases delete` from doing so. The imported resource showed `delete_protection_state = DELETE_PROTECTION_DISABLED`. Terraform's lifecycle constraint is a client-side guard; GCP's own deletion protection is an API-level guard that persists regardless of how the delete is attempted. The deterministic rule only checks for `prevent_destroy` presence.",
-      "remediation": "Add `delete_protection_state = \"DELETE_PROTECTION_ENABLED\"` to the `google_firestore_database.fuel` resource block. This prevents accidental deletion via console, gcloud, or any API caller regardless of Terraform."
+      "resource": "time_sleep.iam_propagation",
+      "related_resources": ["google_cloud_run_v2_service.fuel_backend"],
+      "explanation": "GCP documents IAM propagation as typically completing within 60 seconds but potentially taking up to 7 minutes in rare edge cases. The 90-second sleep is 30 seconds above the typical case but provides no buffer above the documented maximum. A deployment during a period of elevated GCP IAM latency will still fail, requiring a manual re-run. This is the same failure mode that prompted adding the sleep in the first place.",
+      "remediation": "Increase `create_duration` to `\"120s\"` to cover the stated typical maximum, and document in the comment that occasional failures may still require a re-run for edge cases. Alternatively, use `\"300s\"` (5 minutes) as a conservative buffer — the tofu job already has a 30-minute timeout so this is acceptable."
     },
     {
-      "id": "HOLDEN_AI_004",
+      "id": "HOLDEN_AI_008",
       "principle": "governance",
-      "severity": "MEDIUM",
+      "severity": "LOW",
       "confidence": "high",
-      "title": "CI deploy step hardcodes `--allow-unauthenticated` and will silently revert any Terraform auth tightening",
-      "file": ".github/workflows/ci.yml",
-      "line": 105,
-      "resource": "gha_step.deploy-backend.deploy-to-cloud-run",
-      "related_resources": ["google_cloud_run_v2_service.fuel_backend", "google_cloud_run_v2_service_iam_member.public_invoker"],
-      "explanation": "The `gcloud run deploy` step hardcodes `--allow-unauthenticated`. If the Terraform config is ever changed to remove the `allUsers` invoker IAM binding (HLD_GCP_023 remediation), the next CI push will re-apply public auth via this flag, silently overriding the intent. There is no source of truth: Terraform says the IAM binding (which holden flags), and the CI step re-enforces it independently. This creates a latent configuration conflict that would prevent a future security tightening from taking effect.",
-      "remediation": "Remove `--allow-unauthenticated` from the CI deploy command and let Terraform's `google_cloud_run_v2_service_iam_member.public_invoker` be the sole source of truth for auth policy. To deploy a new image without changing auth config, use `gcloud run services update-traffic` or rely on the Terraform-managed service definition."
-    },
-    {
-      "id": "HOLDEN_AI_005",
-      "principle": "identity-and-access",
-      "severity": "MEDIUM",
-      "confidence": "high",
-      "title": "Cloud Run uses the default Compute Engine service account — compromise gives KMS decrypt and GCS objectAdmin project-wide",
-      "file": "terraform/cloud_run.tf",
-      "line": 1,
-      "resource": "google_cloud_run_v2_service.fuel_backend",
-      "related_resources": ["google_project_iam_member.compute_secret_access", "google_kms_crypto_key_iam_member.compute_encrypter", "google_storage_bucket_iam_member.sqlite_compute"],
-      "explanation": "The Cloud Run service uses the default Compute Engine SA (430943803039-compute@). This SA has `secretmanager.secretAccessor` at project level, `cloudkms.cryptoKeyEncrypterDecrypter` on the Garmin token KMS key, and `objectAdmin` on the SQLite bucket. If the application is compromised (RCE, SSRF to the metadata server), the attacker inherits all three. A dedicated SA with only the permissions the app actually needs would limit the blast radius. Holden checks for basic role use but not for default SA being used where a dedicated SA is appropriate.",
-      "remediation": "Create a `google_service_account.fuel_backend` SA and reference it in the Cloud Run template's `service_account` field. Grant only `secretmanager.secretAccessor` on the specific secrets, `cloudkms.cryptoKeyEncrypterDecrypter` on the KMS key, and `storage.objectAdmin` on the SQLite bucket — to this SA only, removing the compute SA's equivalent bindings."
+      "title": "KMS crypto keys have no description or labels — indistinguishable in GCP audit logs and console",
+      "file": "terraform/kms.tf",
+      "line": 6,
+      "resource": "google_kms_crypto_key.garmin_tokens",
+      "related_resources": ["google_kms_crypto_key.sqlite_data"],
+      "explanation": "Both KMS keys (`garmin-tokens` and `sqlite-data`) have no `description` field and no labels. In GCP audit logs, KMS operations show the key resource name but not its purpose. With two keys in the same project encrypting different classes of data (session tokens vs. health/food data), distinguishing them in a security investigation or compliance audit requires reading the Terraform source. Labels and descriptions are the standard mechanism for this.",
+      "remediation": "Add `description` and `labels` to both keys:\n```hcl\ndescription = \"Encrypts Garmin OAuth session tokens stored in SQLite\"\nlabels = { purpose = \"garmin-token-encryption\", environment = \"production\" }\n```"
     }
   ],
   "suggested_policies": [
     {
-      "rationale": "google_firestore_database supports a `delete_protection_state` attribute that enables GCP API-level deletion protection. Terraform's `prevent_destroy` lifecycle only protects against `tofu destroy`; GCP-level protection is the only guard that works regardless of how a delete is attempted (console, gcloud, API). No existing holden policy checks this attribute.",
-      "yaml": "id: HLD_PROPOSED_001\nname: Firestore database must have GCP-level deletion protection enabled\nprinciple: backup-and-recovery\nseverity: MEDIUM\nrationale: |\n  Terraform's prevent_destroy lifecycle flag prevents tofu destroy from\n  deleting the database, but does not prevent deletion via the GCP console,\n  gcloud CLI, or direct API calls. GCP's own delete_protection_state attribute\n  is enforced at the API level regardless of the caller, providing a durable\n  guard against accidental or malicious deletion.\nremediation: |\n  Add delete_protection_state = \"DELETE_PROTECTION_ENABLED\" to the\n  google_firestore_database resource block.\nresources:\n  google_firestore_database:\n    not_equals:\n      delete_protection_state: DELETE_PROTECTION_ENABLED\n"
-    },
-    {
-      "rationale": "Cloud Run services that use the default Compute Engine SA inherit all project-level bindings of that SA, which is typically over-privileged for an application workload. A dedicated SA allows least-privilege scoping. No existing holden policy checks whether the Cloud Run service account is the default Compute Engine SA.",
-      "yaml": "id: HLD_PROPOSED_002\nname: Cloud Run services must not use the default Compute Engine service account\nprinciple: identity-and-access\nseverity: MEDIUM\nrationale: |\n  The default Compute Engine service account inherits project-level IAM bindings\n  accumulated over time and is shared across all resources that do not specify\n  a dedicated SA. Cloud Run services using this account gain far more permissions\n  than needed, increasing blast radius if the application is compromised.\nremediation: |\n  Create a dedicated google_service_account for the Cloud Run service and\n  reference it in template.service_account. Grant only the specific roles\n  the application requires.\nresources:\n  google_cloud_run_v2_service:\n    not_contains:\n      template.service_account: compute@developer.gserviceaccount.com\n"
+      "rationale": "google_kms_crypto_key resources without a description field are common and create operational confusion in multi-key projects. A description is an unambiguous attribute check with no false positives. coverage_by_type for google_kms_crypto_key currently only includes key-rotation checks — no description/label coverage exists.",
+      "yaml": "id: HLD_PROPOSED_003\nname: KMS crypto keys must have a description\nprinciple: governance\nseverity: LOW\nrationale: |\n  KMS keys without descriptions are indistinguishable in audit logs, billing\n  reports, and the GCP console. When multiple keys exist in a project, operators\n  must cross-reference Terraform source to determine which key encrypts which\n  data class. A description field provides inline context at the point of use.\nremediation: |\n  Add a description = \"...\" field to the google_kms_crypto_key resource\n  explaining what data this key protects and in which environment.\nresources:\n  google_kms_crypto_key:\n    not_null:\n      - description\n"
     }
   ]
 }
