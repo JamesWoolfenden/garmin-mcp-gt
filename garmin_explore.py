@@ -101,10 +101,14 @@ def show_activity_detail(client: Garmin, activity_id: str):
     print(f"  Max HR:           {summary.get('maxHR', 'n/a')} bpm")
     print(f"  Avg power:        {summary.get('avgPower', 'n/a')} W")
     print(f"  Max power:        {summary.get('maxPower', 'n/a')} W")
-    print(f"  Avg cadence:      {summary.get('averageBikingCadenceInRevPerMinute', summary.get('averageRunningCadenceInStepsPerMinute', 'n/a'))}")
+    print(
+        f"  Avg cadence:      {summary.get('averageBikingCadenceInRevPerMinute', summary.get('averageRunningCadenceInStepsPerMinute', 'n/a'))}"
+    )
     print(f"  Elevation gain:   {summary.get('elevationGain', 'n/a')} m")
     print(f"  Calories:         {summary.get('calories', 'n/a')}")
-    print(f"  Training effect:  aerobic={summary.get('aerobicTrainingEffect', 'n/a')}  anaerobic={summary.get('anaerobicTrainingEffect', 'n/a')}")
+    print(
+        f"  Training effect:  aerobic={summary.get('aerobicTrainingEffect', 'n/a')}  anaerobic={summary.get('anaerobicTrainingEffect', 'n/a')}"
+    )
 
     hr_zones = client.get_activity_hr_in_timezones(activity_id)
     if hr_zones:
@@ -176,20 +180,29 @@ def show_weekly_trends(client: Garmin, today: date, weeks: int = 4):
         acts = _dedup_activities(
             client.get_activities_by_date(week_start.isoformat(), week_end.isoformat())
         )
-        rides = [a for a in acts if "cycling" in a.get("activityType", {}).get("typeKey", "").lower()
-                 or "biking" in a.get("activityType", {}).get("typeKey", "").lower()]
+        rides = [
+            a
+            for a in acts
+            if "cycling" in a.get("activityType", {}).get("typeKey", "").lower()
+            or "biking" in a.get("activityType", {}).get("typeKey", "").lower()
+        ]
         total_km = sum(a.get("distance", 0) for a in rides) / 1000
         total_min = sum(a.get("duration", 0) for a in rides) / 60
-        print(f"  {week_start}:  {len(rides)} rides  {total_km:.0f} km  {total_min:.0f} min")
+        print(
+            f"  {week_start}:  {len(rides)} rides  {total_km:.0f} km  {total_min:.0f} min"
+        )
 
 
 def show_body_battery(client: Garmin, today: date):
     print("\n--- Body Battery (today) ---")
+    stats = client.get_stats(today.isoformat())
+    current = stats.get("bodyBatteryMostRecentValue", "n/a")
+    print(f"  Current level: {current}%")
     data = client.get_body_battery(today.isoformat())
     if data:
         charged = data[0].get("charged", "n/a")
         drained = data[0].get("drained", "n/a")
-        print(f"  Charged: {charged}  Drained: {drained}")
+        print(f"  Charged today: {charged}  Drained today: {drained}")
 
 
 if __name__ == "__main__":

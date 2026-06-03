@@ -79,6 +79,9 @@ def get_today_stats() -> dict[str, Any]:
     battery = {}
     if bb:
         battery = {"charged": bb[0].get("charged"), "drained": bb[0].get("drained")}
+    current_bb = stats.get("bodyBatteryMostRecentValue")
+    if current_bb is not None:
+        battery["current"] = current_bb
 
     return {
         "date": today,

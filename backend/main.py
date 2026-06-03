@@ -133,6 +133,9 @@ def _garmin_today(uid: str) -> dict[str, Any] | None:
                     "charged": bb[0].get("charged"),
                     "drained": bb[0].get("drained"),
                 }
+            current_bb = stats.get("bodyBatteryMostRecentValue")
+            if current_bb is not None:
+                battery["current"] = current_bb
             return {
                 "date": today,
                 "active_kcal": stats.get("activeKilocalories", 0),
@@ -285,9 +288,7 @@ def claude_recommend(
 
     if wellness:
         if wellness.get("body_battery_charged") is not None:
-            context_parts.append(
-                f"Body battery: {wellness['body_battery_charged']}% charged."
-            )
+            context_parts.append(f"Body battery: {wellness['body_battery_charged']}%.")
         if wellness.get("hrv_last_night"):
             context_parts.append(f"Last night HRV: {wellness['hrv_last_night']}ms.")
         if wellness.get("sleep_score"):
@@ -467,7 +468,10 @@ async def _compute_balance(uid: str) -> dict:
 
     # Augment body battery from today stats into wellness context
     if garmin and garmin.get("body_battery"):
-        wellness["body_battery_charged"] = garmin["body_battery"].get("charged")
+        bb = garmin["body_battery"]
+        wellness["body_battery_charged"] = (
+            bb.get("current") if bb.get("current") is not None else bb.get("charged")
+        )
 
     if garmin and not activities:
         activities = [
