@@ -194,6 +194,7 @@ function Settings() {
   const [kcalTarget, setKcalTarget] = useState("");
   const [nudgeTimes, setNudgeTimes] = useState("");
   const [heightCm, setHeightCm] = useState("");
+  const [waistCm, setWaistCm] = useState("");
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState(null);
@@ -205,7 +206,8 @@ function Settings() {
       setKcalTarget(String(p.kcal_target || 2000));
       setNudgeTimes((p.nudge_times || []).join(", "));
       setHeightCm(p.height_cm ? String(p.height_cm) : "");
-      setSaved({ kcal_target: p.kcal_target, nudge_times: p.nudge_times, height_cm: p.height_cm });
+      setWaistCm(p.waist_cm ? String(p.waist_cm) : "");
+      setSaved({ kcal_target: p.kcal_target, nudge_times: p.nudge_times, height_cm: p.height_cm, waist_cm: p.waist_cm });
     }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -219,6 +221,7 @@ function Settings() {
         kcal_target: parseInt(kcalTarget),
         nudge_times: times,
         ...(heightCm ? { height_cm: parseInt(heightCm) } : {}),
+        ...(waistCm ? { waist_cm: parseInt(waistCm) } : {}),
       };
       await updateProfile(updates);
       setSaved({ ...updates });
@@ -239,6 +242,7 @@ function Settings() {
             <p style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px"}}>
               {saved.kcal_target} kcal
               {saved.height_cm ? ` · ${saved.height_cm}cm` : ""}
+              {saved.waist_cm ? ` · waist ${saved.waist_cm}cm` : ""}
               {" · nudges "}{(saved.nudge_times || []).join(", ")}
             </p>
           )}
@@ -261,6 +265,13 @@ function Settings() {
               onChange={e => setHeightCm(e.target.value)}
               style={{display:"block",width:"100%",marginTop:"4px"}} min="100" max="250"
               placeholder="e.g. 178" />
+          </label>
+          <label style={{fontSize:"13px",color:"var(--text)"}}>
+            Waist (cm)
+            <input className="log-input" type="number" value={waistCm}
+              onChange={e => setWaistCm(e.target.value)}
+              style={{display:"block",width:"100%",marginTop:"4px"}} min="50" max="200"
+              placeholder="e.g. 82" />
           </label>
           <label style={{fontSize:"13px",color:"var(--text)"}}>
             Nudge times (comma-separated)

@@ -383,6 +383,41 @@ def get_weekly_trends(weeks: int = 8) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
+def get_cycling_ftp() -> dict[str, Any]:
+    """Return the user's current cycling Functional Threshold Power (FTP) and W/kg.
+
+    FTP is the highest average power a cyclist can sustain for one hour.
+    W/kg (watts per kilogram) is the key cycling performance metric.
+    """
+    ftp_data = client().get_cycling_ftp()
+    ftp = None
+    if isinstance(ftp_data, dict):
+        ftp = ftp_data.get("functionalThresholdPower")
+    elif isinstance(ftp_data, list) and ftp_data:
+        ftp = ftp_data[0].get("functionalThresholdPower")
+
+    result: dict[str, Any] = {"ftp_watts": int(ftp) if ftp else None}
+
+    # Try to compute W/kg from latest weight
+    try:
+        today = date.today()
+        start = (today - timedelta(days=30)).isoformat()
+        weight_data = client().get_weigh_ins(start, today.isoformat())
+        summaries = weight_data.get("dailyWeightSummaries") or []
+        if summaries:
+            latest = sorted(summaries, key=lambda x: x.get("summaryDate", ""))[-1]
+            weight_g = latest.get("latestWeight", {}).get("weight")
+            if weight_g and ftp:
+                weight_kg = weight_g / 1000
+                result["weight_kg"] = round(weight_kg, 2)
+                result["w_per_kg"] = round(ftp / weight_kg, 2)
+    except Exception:
+        pass
+
+    return result
+
+
+@mcp.tool()
 def get_weight(days: int = 30) -> list[dict[str, Any]]:
     """Return weigh-in history from Garmin Index scale for the last N days.
 

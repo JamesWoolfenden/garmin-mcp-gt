@@ -260,6 +260,20 @@ def _garmin_wellness(uid: str) -> dict[str, Any]:
                         "avg_weight_kg", 0
                     )
                     result["weight_trend_7d_kg"] = round(delta, 2)
+                    result["weight_kg"] = trend[-1].get("avg_weight_kg")
+            except Exception:
+                pass
+
+            # Cycling FTP
+            try:
+                ftp_data = g.get_cycling_ftp()
+                ftp = None
+                if isinstance(ftp_data, dict):
+                    ftp = ftp_data.get("functionalThresholdPower")
+                elif isinstance(ftp_data, list) and ftp_data:
+                    ftp = ftp_data[0].get("functionalThresholdPower")
+                if ftp:
+                    result["ftp_watts"] = int(ftp)
             except Exception:
                 pass
     except Exception:
@@ -310,11 +324,20 @@ def claude_recommend(
         " consider workout intensity, fatigue indicators (body battery, HRV), and time remaining in the day."
     )
 
-    # Add weight trend separately (not already in activity_guidance)
+    # Add weight trend, FTP and W/kg separately
     wellness_str = ""
-    if wellness and "weight_trend_7d_kg" in wellness:
-        direction = "up" if wellness["weight_trend_7d_kg"] > 0 else "down"
-        wellness_str = f" Weight trending {direction} {abs(wellness['weight_trend_7d_kg'])}kg this week."
+    if wellness:
+        parts = []
+        if "weight_trend_7d_kg" in wellness:
+            direction = "up" if wellness["weight_trend_7d_kg"] > 0 else "down"
+            parts.append(
+                f"Weight trending {direction} {abs(wellness['weight_trend_7d_kg'])}kg this week."
+            )
+        if wellness.get("ftp_watts") and wellness.get("weight_kg"):
+            w_per_kg = round(wellness["ftp_watts"] / wellness["weight_kg"], 2)
+            parts.append(f"Cycling FTP: {wellness['ftp_watts']}W ({w_per_kg} W/kg).")
+        if parts:
+            wellness_str = " " + " ".join(parts)
 
     macros_str = ""
     if macros and any(macros.values()):
@@ -684,6 +707,7 @@ class ProfileUpdate(BaseModel):
     nudge_times: list[str] | None = None
     timezone: str | None = None
     height_cm: int | None = None
+    waist_cm: int | None = None
 
 
 @app.get("/profile")
