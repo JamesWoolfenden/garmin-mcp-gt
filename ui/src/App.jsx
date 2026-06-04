@@ -35,12 +35,14 @@ function BalanceBar({ kcalIn, kcalBurned, kcalTarget }) {
 }
 
 function FoodEntry({ entry, onDelete }) {
+  const hasMacros = entry.carbs_g || entry.protein_g || entry.fat_g;
   return (
     <div className="food-entry">
       <div className="food-entry-left">
         <span className="food-parsed">{entry.parsed}</span>
         <span className="food-time">
           {new Date(entry.logged_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+          {hasMacros && ` · ${entry.carbs_g}g C · ${entry.protein_g}g P · ${entry.fat_g}g F`}
         </span>
       </div>
       <div className="food-entry-right">
@@ -449,7 +451,14 @@ export default function App() {
       {tab === "food" && entries.length > 0 && (
         <div className="day-total">
           <span>Total today</span>
-          <span>{Math.round(totalKcal)} kcal</span>
+          <span>
+            {balance?.macros_today && (
+              <span className="day-macros">
+                {balance.macros_today.carbs_g}g C · {balance.macros_today.protein_g}g P · {balance.macros_today.fat_g}g F ·{" "}
+              </span>
+            )}
+            {Math.round(totalKcal)} kcal
+          </span>
         </div>
       )}
       {tab === "food" && <GarminConnect />}
