@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { logFood, deleteFood, getBalance, sendChat, getChatHistory, createGarminUploadToken, getProfile, updateProfile } from "./lib/api";
+import { logFood, deleteFood, logActivity, deleteActivity, getBalance, sendChat, getChatHistory, createGarminUploadToken, getProfile, updateProfile } from "./lib/api";
 import { usePush } from "./hooks/usePush";
 import { useAuth } from "./hooks/useAuth";
 import { signInWithGoogle, signInWithEmail, registerWithEmail, signOutUser } from "./firebase";
@@ -50,6 +50,59 @@ function FoodEntry({ entry, onDelete }) {
         <button className="delete-btn" onClick={() => onDelete(entry.id)} aria-label="Remove">×</button>
       </div>
     </div>
+  );
+}
+
+function ActivityEntry({ activity, onDelete }) {
+  return (
+    <div className="food-entry">
+      <div className="food-entry-left">
+        <span className="food-parsed">{activity.name}</span>
+        <span className="food-time">
+          {new Date(activity.logged_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} · manual
+        </span>
+      </div>
+      <div className="food-entry-right">
+        <span className="food-kcal">{activity.kcal} kcal</span>
+        <button className="delete-btn" onClick={() => onDelete(activity.id)} aria-label="Remove">×</button>
+      </div>
+    </div>
+  );
+}
+
+function ActivityForm({ onAdd }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [kcal, setKcal] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!name.trim() || !kcal) return;
+    setLoading(true);
+    try {
+      await onAdd(name.trim(), parseInt(kcal));
+      setName(""); setKcal(""); setOpen(false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!open) return (
+    <button className="activity-add-btn" onClick={() => setOpen(true)}>+ Add activity</button>
+  );
+
+  return (
+    <form className="activity-form" onSubmit={submit}>
+      <input className="log-input activity-name-input" value={name} onChange={e => setName(e.target.value)}
+        placeholder="e.g. 45min ride" autoFocus />
+      <input className="log-input activity-kcal-input" type="number" value={kcal} onChange={e => setKcal(e.target.value)}
+        placeholder="kcal" min="1" max="9999" />
+      <button className="log-btn" type="submit" disabled={loading || !name.trim() || !kcal}>
+        {loading ? "…" : "Add"}
+      </button>
+      <button type="button" className="delete-btn" style={{fontSize:"14px"}} onClick={() => setOpen(false)}>×</button>
+    </form>
   );
 }
 
@@ -405,6 +458,17 @@ export default function App() {
   };
 
   const totalKcal = entries.reduce((s, e) => s + e.kcal, 0);
+  const manualActivities = balance?.manual_activities || [];
+
+  const handleAddActivity = async (name, kcal) => {
+    await logActivity(name, kcal);
+    await loadData(viewDate);
+  };
+
+  const handleDeleteActivity = async (id) => {
+    await deleteActivity(id);
+    await loadData(viewDate);
+  };
 
   if (user === undefined) return <div className="app"><p style={{padding:"2rem"}}>Loading…</p></div>;
   if (accessDenied) return <AccessDenied />;
@@ -463,6 +527,11 @@ export default function App() {
           {error && <div className="error-banner">{error}</div>}
 
           <div className="entries">
+            {manualActivities.length > 0 && manualActivities.map(a => (
+              <ActivityEntry key={a.id} activity={a} onDelete={handleDeleteActivity} />
+            ))}
+            {isToday && <ActivityForm onAdd={handleAddActivity} />}
+            {(manualActivities.length > 0 || isToday) && <div className="entries-divider" />}
             {entries.length === 0 && (
               <p className="empty">Nothing logged yet. Tell me what you have eaten.</p>
             )}

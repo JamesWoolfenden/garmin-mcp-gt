@@ -37,15 +37,18 @@ from db import (
     consume_upload_token,
     create_upload_token,
     delete_food_entry,
+    delete_manual_activity,
     delete_push_subscription,
     delete_mcp_api_keys,
     delete_registered_user,
     get_all_subscribed_users,
     get_food_entries,
+    get_manual_activities,
     get_profile,
     get_push_subscriptions,
     get_user_for_mcp_key,
     insert_food_entry,
+    insert_manual_activity,
     list_registered_users,
     load_chat_history,
     register_user,
@@ -419,6 +422,34 @@ def delete_food(entry_id: str, uid: str = Depends(current_user)):
     return {"ok": True}
 
 
+# -- Manual activities --------------------------------------------------------
+
+
+class ActivityRequest(BaseModel):
+    name: str
+    kcal: int
+
+
+@app.post("/activity")
+def log_activity(req: ActivityRequest, uid: str = Depends(current_user)):
+    entry = {
+        "id": str(uuid.uuid4()),
+        "user_id": uid,
+        "date": today_str(),
+        "name": req.name.strip()[:200],
+        "kcal": max(0, req.kcal),
+        "logged_at": datetime.now(timezone.utc).isoformat(),
+    }
+    insert_manual_activity(entry)
+    return {k: v for k, v in entry.items() if k != "user_id"}
+
+
+@app.delete("/activity/{entry_id}")
+def delete_activity(entry_id: str, uid: str = Depends(current_user)):
+    delete_manual_activity(entry_id, uid)
+    return {"ok": True}
+
+
 # -- Balance ------------------------------------------------------------------
 
 
@@ -456,16 +487,31 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
     profile = get_profile(uid)
     kcal_target = profile["kcal_target"]
 
+    manual = [
+        {
+            "name": a["name"],
+            "type": "manual",
+            "duration_min": 0,
+            "distance_km": 0,
+            "kcal": a["kcal"],
+            "avg_power_w": None,
+            "id": a["id"],
+        }
+        for a in get_manual_activities(uid, target_date)
+    ]
+
     # For past dates skip live Garmin data and AI recommendation
     if target_date != today_str():
+        kcal_burned = sum(a["kcal"] for a in manual)
         return {
             **agg,
-            "kcal_burned": 0,
+            "kcal_burned": kcal_burned,
             "kcal_target": kcal_target,
-            "balance": agg["kcal_in"],
+            "balance": agg["kcal_in"] - kcal_burned,
             "status": "historical",
             "recommendation": None,
-            "activity_today": [],
+            "activity_today": manual,
+            "manual_activities": manual,
             "garmin_available": False,
         }
 
@@ -484,12 +530,14 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
     if isinstance(wellness, Exception):
         wellness = {}
 
+    garmin_kcal = 0
     if activities:
-        kcal_burned = sum(a.get("kcal") or 0 for a in activities)
+        garmin_kcal = sum(a.get("kcal") or 0 for a in activities)
     elif garmin:
-        kcal_burned = garmin["active_kcal"]
-    else:
-        kcal_burned = 0
+        garmin_kcal = garmin["active_kcal"]
+
+    manual_kcal = sum(a["kcal"] for a in manual)
+    kcal_burned = garmin_kcal + manual_kcal
 
     if garmin and garmin.get("body_battery"):
         bb = garmin["body_battery"]
@@ -509,6 +557,8 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
             }
         ]
 
+    all_activities = (activities or []) + manual
+
     hour = datetime.now().hour
     time_of_day = f"{hour:02d}:00"
 
@@ -518,7 +568,7 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
             agg["kcal_in"],
             kcal_burned,
             kcal_target,
-            activities or [],
+            all_activities,
             time_of_day,
             wellness or {},
             agg["macros_today"],
@@ -537,7 +587,8 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
         "balance": agg["kcal_in"] - kcal_burned,
         "status": rec["status"],
         "recommendation": rec["recommendation"],
-        "activity_today": activities or [],
+        "activity_today": all_activities,
+        "manual_activities": manual,
         "garmin_available": garmin is not None,
     }
 

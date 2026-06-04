@@ -117,6 +117,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS chat_history_user_time
             ON chat_history(user_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS manual_activities (
+            id          TEXT PRIMARY KEY,
+            user_id     TEXT NOT NULL,
+            date        TEXT NOT NULL,
+            name        TEXT NOT NULL,
+            kcal        INTEGER NOT NULL,
+            logged_at   TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS manual_activities_user_date
+            ON manual_activities(user_id, date);
     """)
     # Migration: add macros_json if it doesn't exist yet
     try:
@@ -335,6 +346,37 @@ def get_push_subscriptions(user_id: str) -> list[dict]:
         .fetchall()
     )
     return [{**dict(r), "keys": json.loads(r["keys"])} for r in rows]
+
+
+# ── Manual activities ─────────────────────────────────────────────────────────
+
+
+def insert_manual_activity(entry: dict) -> None:
+    get_db().execute(
+        "INSERT INTO manual_activities (id, user_id, date, name, kcal, logged_at) "
+        "VALUES (:id, :user_id, :date, :name, :kcal, :logged_at)",
+        entry,
+    )
+    get_db().commit()
+
+
+def get_manual_activities(user_id: str, date: str) -> list[dict]:
+    rows = (
+        get_db()
+        .execute(
+            "SELECT * FROM manual_activities WHERE user_id=? AND date=? ORDER BY logged_at DESC",
+            (user_id, date),
+        )
+        .fetchall()
+    )
+    return [dict(r) for r in rows]
+
+
+def delete_manual_activity(entry_id: str, user_id: str) -> None:
+    get_db().execute(
+        "DELETE FROM manual_activities WHERE id=? AND user_id=?", (entry_id, user_id)
+    )
+    get_db().commit()
 
 
 # ── Profile ───────────────────────────────────────────────────────────────────
