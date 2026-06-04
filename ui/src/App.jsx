@@ -251,6 +251,7 @@ function Settings() {
           {open ? "Cancel" : "Edit"}
         </button>
       </div>
+      <GarminConnect nested />
       {open && (
         <form onSubmit={save} style={{display:"flex",flexDirection:"column",gap:"10px",marginTop:"12px"}}>
           <label style={{fontSize:"13px",color:"var(--text)"}}>
@@ -289,7 +290,7 @@ function Settings() {
   );
 }
 
-function GarminConnect() {
+function GarminConnect({ nested = false }) {
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -313,7 +314,7 @@ function GarminConnect() {
   };
 
   return (
-    <div style={{padding:"16px 20px",borderTop:"1px solid var(--border)"}}>
+    <div style={nested ? {marginTop:"12px",paddingTop:"12px",borderTop:"1px solid var(--border)"} : {padding:"16px 20px",borderTop:"1px solid var(--border)"}}>
       <p style={{fontSize:"13px",color:"var(--muted)",marginBottom:"10px"}}>
         Connect your Garmin to enable activity-aware advice.
       </p>
@@ -564,7 +565,6 @@ export default function App() {
           </span>
         </div>
       )}
-      {tab === "food" && <GarminConnect />}
       {tab === "food" && <Settings />}
     </div>
   );
