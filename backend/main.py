@@ -326,7 +326,8 @@ def claude_recommend(
             "recovery context, and macro breakdown, give a short personalised recommendation. "
             f"{activity_guidance}{wellness_str}{macros_str} "
             'Return ONLY valid JSON: {"status": "on_track"|"over"|"under", "recommendation": string}. '
-            "Recommendation must be 1-2 sentences max. No markdown, no preamble."
+            "Recommendation must be 1-2 sentences max. No markdown, no preamble. "
+            "Do NOT mention any app, website, or URL — the recommendation is read directly in a notification."
         ),
         messages=[
             {
@@ -421,11 +422,8 @@ def delete_food(entry_id: str, uid: str = Depends(current_user)):
 # -- Balance ------------------------------------------------------------------
 
 
-async def _compute_balance(uid: str) -> dict:
-    entries = get_food_entries(uid, today_str())
+def _aggregate_entries(entries: list) -> dict:
     kcal_in = sum(e["kcal"] for e in entries)
-
-    # Aggregate macros from today's entries
     total_carbs = total_protein = total_fat = 0
     for e in entries:
         raw = e.get("macros_json") or "{}"
@@ -435,16 +433,42 @@ async def _compute_balance(uid: str) -> dict:
         total_carbs += m.get("carbs_g", 0)
         total_protein += m.get("protein_g", 0)
         total_fat += m.get("fat_g", 0)
-    macros_today = {
-        "carbs_g": total_carbs,
-        "protein_g": total_protein,
-        "fat_g": total_fat,
+    cleaned = [
+        {k: v for k, v in e.items() if k not in ("user_id", "date", "macros_json")}
+        for e in entries
+    ]
+    return {
+        "kcal_in": kcal_in,
+        "macros_today": {
+            "carbs_g": total_carbs,
+            "protein_g": total_protein,
+            "fat_g": total_fat,
+        },
+        "entries": cleaned,
+        "total_kcal": kcal_in,
     }
 
+
+async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
+    target_date = for_date or today_str()
+    entries = get_food_entries(uid, target_date)
+    agg = _aggregate_entries(entries)
     profile = get_profile(uid)
     kcal_target = profile["kcal_target"]
 
-    # Fetch Garmin data and wellness context in parallel
+    # For past dates skip live Garmin data and AI recommendation
+    if target_date != today_str():
+        return {
+            **agg,
+            "kcal_burned": 0,
+            "kcal_target": kcal_target,
+            "balance": agg["kcal_in"],
+            "status": "historical",
+            "recommendation": None,
+            "activity_today": [],
+            "garmin_available": False,
+        }
+
     import asyncio
 
     garmin, activities, wellness = await asyncio.gather(
@@ -460,7 +484,6 @@ async def _compute_balance(uid: str) -> dict:
     if isinstance(wellness, Exception):
         wellness = {}
 
-    # Prefer summing actual activity calories over the lagging get_stats figure
     if activities:
         kcal_burned = sum(a.get("kcal") or 0 for a in activities)
     elif garmin:
@@ -468,7 +491,6 @@ async def _compute_balance(uid: str) -> dict:
     else:
         kcal_burned = 0
 
-    # Augment body battery from today stats into wellness context
     if garmin and garmin.get("body_battery"):
         bb = garmin["body_battery"]
         wellness["body_battery_charged"] = (
@@ -493,43 +515,36 @@ async def _compute_balance(uid: str) -> dict:
     try:
         rec = await run_in_threadpool(
             claude_recommend,
-            kcal_in,
+            agg["kcal_in"],
             kcal_burned,
             kcal_target,
             activities or [],
             time_of_day,
             wellness or {},
-            macros_today,
+            agg["macros_today"],
         )
     except Exception:
-        net = kcal_in - kcal_burned
+        net = agg["kcal_in"] - kcal_burned
         rec = {
             "status": "on_track" if net <= kcal_target else "over",
             "recommendation": "Activity data unavailable — estimate based on food only.",
         }
 
-    food_entries_clean = [
-        {k: v for k, v in e.items() if k not in ("user_id", "date", "macros_json")}
-        for e in entries
-    ]
     return {
-        "kcal_in": kcal_in,
+        **agg,
         "kcal_burned": kcal_burned,
         "kcal_target": kcal_target,
-        "balance": kcal_in - kcal_burned,
+        "balance": agg["kcal_in"] - kcal_burned,
         "status": rec["status"],
         "recommendation": rec["recommendation"],
         "activity_today": activities or [],
         "garmin_available": garmin is not None,
-        "macros_today": macros_today,
-        "entries": food_entries_clean,
-        "total_kcal": kcal_in,
     }
 
 
 @app.get("/balance")
-async def get_balance(uid: str = Depends(current_user)):
-    return await _compute_balance(uid)
+async def get_balance(uid: str = Depends(current_user), date: str | None = None):
+    return await _compute_balance(uid, date)
 
 
 # -- Push ---------------------------------------------------------------------
@@ -669,12 +684,14 @@ async def nudge(request: Request):
     pushed_total = 0
     for uid in get_all_subscribed_users():
         bal = await _compute_balance(uid)
-        if bal["status"] == "on_track" and bal["garmin_available"]:
-            continue
-        body = bal["recommendation"]
+        kcal_in = round(bal["kcal_in"])
+        kcal_burned = round(bal["kcal_burned"])
+        net = kcal_in - kcal_burned
+        title = f"Fuel · {kcal_in} in · {kcal_burned} burned · {net} net"
+        body = bal["recommendation"] or f"{kcal_in} kcal consumed today."
         for sub in get_push_subscriptions(uid):
             if send_push(
-                {"endpoint": sub["endpoint"], "keys": sub["keys"]}, "Fuel", body
+                {"endpoint": sub["endpoint"], "keys": sub["keys"]}, title, body
             ):
                 pushed_total += 1
 

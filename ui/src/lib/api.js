@@ -25,7 +25,7 @@ async function req(path, opts = {}) {
 export const logFood      = (text) => req("/food", { method: "POST", body: JSON.stringify({ text }) });
 export const getTodayFood = ()     => req("/food/today");
 export const deleteFood   = (id)   => req(`/food/${id}`, { method: "DELETE" });
-export const getBalance   = ()     => req("/balance");
+export const getBalance   = (date) => req(date ? `/balance?date=${date}` : "/balance");
 export const getProfile   = ()     => req("/profile");
 export const updateProfile = (d)   => req("/profile", { method: "PUT", body: JSON.stringify(d) });
 

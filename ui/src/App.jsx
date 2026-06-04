@@ -331,10 +331,21 @@ function SignIn() {
   );
 }
 
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function formatDate(iso) {
+  if (iso === todayISO()) return "Today";
+  const d = new Date(iso + "T12:00:00");
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
 export default function App() {
   const user = useAuth();
   const [accessDenied, setAccessDenied] = useState(false);
   const [tab, setTab] = useState("food"); // food | chat
+  const [viewDate, setViewDate] = useState(todayISO());
   const [input, setInput] = useState("");
   const [entries, setEntries] = useState([]);
   const [balance, setBalance] = useState(null);
@@ -342,10 +353,11 @@ export default function App() {
   const [error, setError] = useState(null);
   const inputRef = useRef(null);
   const { state: pushState, subscribe, unsubscribe } = usePush();
+  const isToday = viewDate === todayISO();
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (date) => {
     try {
-      const bal = await getBalance();
+      const bal = await getBalance(date === todayISO() ? undefined : date);
       setEntries(bal.entries || []);
       setBalance(bal);
     } catch (e) {
@@ -357,7 +369,14 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => { if (user) loadData(); }, [loadData, user]);
+  useEffect(() => { if (user) loadData(viewDate); }, [loadData, user, viewDate]);
+
+  const shiftDate = (delta) => {
+    const d = new Date(viewDate + "T12:00:00");
+    d.setDate(d.getDate() + delta);
+    const next = d.toISOString().slice(0, 10);
+    if (next <= todayISO()) setViewDate(next);
+  };
 
   const handleLog = async (e) => {
     e.preventDefault();
@@ -367,9 +386,7 @@ export default function App() {
     try {
       await logFood(input.trim());
       setInput("");
-      const bal = await getBalance();
-      setEntries(bal.entries || []);
-      setBalance(bal);
+      await loadData(viewDate);
     } catch (e) {
       setError("Failed to log — try again");
     } finally {
@@ -381,9 +398,7 @@ export default function App() {
   const handleDelete = async (id) => {
     try {
       await deleteFood(id);
-      const bal = await getBalance();
-      setEntries(bal.entries || []);
-      setBalance(bal);
+      await loadData(viewDate);
     } catch (e) {
       setError("Could not remove entry");
     }
@@ -411,29 +426,39 @@ export default function App() {
 
       {tab === "chat" ? <Chat /> : (
         <>
+          <div className="date-nav">
+            <button className="date-nav-btn" onClick={() => shiftDate(-1)}>‹</button>
+            <span className="date-nav-label">{formatDate(viewDate)}</span>
+            <button className="date-nav-btn" onClick={() => shiftDate(1)} disabled={isToday}>›</button>
+          </div>
+
           {balance && (
             <div className="balance-section">
-              <BalanceBar kcalIn={balance.kcal_in} kcalBurned={balance.kcal_burned} kcalTarget={balance.kcal_target} />
+              {balance.status !== "historical" && (
+                <BalanceBar kcalIn={balance.kcal_in} kcalBurned={balance.kcal_burned} kcalTarget={balance.kcal_target} />
+              )}
               <Recommendation text={balance.recommendation} status={balance.status} />
             </div>
           )}
 
-          <form className="log-form" onSubmit={handleLog}>
-            <input
-              ref={inputRef}
-              className="log-input"
-              type="text"
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              placeholder="had granola and a coffee…"
-              disabled={loading}
-              autoComplete="off"
-              autoCapitalize="none"
-            />
-            <button className="log-btn" type="submit" disabled={loading || !input.trim()}>
-              {loading ? "…" : "Log"}
-            </button>
-          </form>
+          {isToday && (
+            <form className="log-form" onSubmit={handleLog}>
+              <input
+                ref={inputRef}
+                className="log-input"
+                type="text"
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                placeholder="had granola and a coffee…"
+                disabled={loading}
+                autoComplete="off"
+                autoCapitalize="none"
+              />
+              <button className="log-btn" type="submit" disabled={loading || !input.trim()}>
+                {loading ? "…" : "Log"}
+              </button>
+            </form>
+          )}
 
           {error && <div className="error-banner">{error}</div>}
 
