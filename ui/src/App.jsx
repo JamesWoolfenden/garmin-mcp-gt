@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { logFood, deleteFood, logActivity, deleteActivity, getBalance, sendChat, getChatHistory, createGarminUploadToken, getProfile, updateProfile } from "./lib/api";
+import { logEntry, deleteFood, deleteActivity, getBalance, sendChat, getChatHistory, createGarminUploadToken, getProfile, updateProfile } from "./lib/api";
 import { usePush } from "./hooks/usePush";
 import { useAuth } from "./hooks/useAuth";
 import { signInWithGoogle, signInWithEmail, registerWithEmail, signOutUser } from "./firebase";
@@ -434,7 +434,7 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      await logFood(input.trim());
+      await logEntry(input.trim());
       setInput("");
       await loadData(viewDate);
     } catch (e) {
@@ -456,11 +456,6 @@ export default function App() {
 
   const totalKcal = entries.reduce((s, e) => s + e.kcal, 0);
   const manualActivities = balance?.manual_activities || [];
-
-  const handleAddActivity = async (text) => {
-    await logActivity(text);
-    await loadData(viewDate);
-  };
 
   const handleDeleteActivity = async (id) => {
     await deleteActivity(id);
@@ -510,7 +505,7 @@ export default function App() {
                 type="text"
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                placeholder="had granola and a coffee…"
+                placeholder="granola and coffee… or 45min ride…"
                 disabled={loading}
                 autoComplete="off"
                 autoCapitalize="none"
@@ -527,8 +522,7 @@ export default function App() {
             {manualActivities.length > 0 && manualActivities.map(a => (
               <ActivityEntry key={a.id} activity={a} onDelete={handleDeleteActivity} />
             ))}
-            {isToday && <ActivityForm onAdd={handleAddActivity} />}
-            {(manualActivities.length > 0 || isToday) && <div className="entries-divider" />}
+            {manualActivities.length > 0 && <div className="entries-divider" />}
             {entries.length === 0 && (
               <p className="empty">Nothing logged yet. Tell me what you have eaten.</p>
             )}

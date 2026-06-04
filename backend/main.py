@@ -190,26 +190,31 @@ async def fetch_garmin_activities(uid: str) -> list[dict] | None:
     return await run_in_threadpool(_garmin_activities, uid)
 
 
-def claude_parse_food(text: str) -> dict[str, Any]:
-    """Ask Claude to parse a natural language food description into kcal and macros."""
+def claude_parse_log(text: str) -> dict[str, Any]:
+    """Classify text as food or activity, then extract the relevant fields."""
     msg = ANTHROPIC_CLIENT.messages.create(
         model="claude-sonnet-4-5",
         max_tokens=350,
         system=(
-            "You are a nutrition estimator. Given a natural language food description, "
-            "return ONLY valid JSON with these fields: "
-            '"parsed" (string: concise human-readable interpretation using UK portion sizes), '
-            '"kcal" (integer), '
-            '"carbs_g" (integer: estimated carbohydrates in grams), '
-            '"protein_g" (integer: estimated protein in grams), '
-            '"fat_g" (integer: estimated fat in grams). '
+            "You are a fitness and nutrition logger. Given free text, decide if it describes "
+            "food/drink or a physical activity, then extract the relevant data. "
+            "Return ONLY valid JSON. "
+            'For food: {"type":"food","parsed":string,"kcal":int,"carbs_g":int,"protein_g":int,"fat_g":int}. '
+            'For activity: {"type":"activity","name":string,"kcal":int}. '
+            "Use UK portion sizes for food. "
             "No preamble, no markdown, no explanation. Just the JSON object."
         ),
         messages=[{"role": "user", "content": text}],
     )
-    raw = msg.content[0].text.strip()
-    raw = raw.replace("```json", "").replace("```", "").strip()
+    raw = msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
     return json.loads(raw)
+
+
+def claude_parse_food(text: str) -> dict[str, Any]:
+    result = claude_parse_log(text)
+    if result.get("type") == "activity":
+        raise ValueError("activity")
+    return result
 
 
 def _garmin_wellness(uid: str) -> dict[str, Any]:
@@ -425,30 +430,13 @@ def delete_food(entry_id: str, uid: str = Depends(current_user)):
 # -- Manual activities --------------------------------------------------------
 
 
-def claude_parse_activity(text: str) -> dict[str, Any]:
-    msg = ANTHROPIC_CLIENT.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=100,
-        system=(
-            "You are a fitness calorie estimator. Given a description of a physical activity, "
-            "return ONLY valid JSON with two fields: "
-            '"name" (string: concise activity label, e.g. "10min indoor skydiving"), '
-            '"kcal" (integer: estimated calories burned for an adult). '
-            "No preamble, no markdown, no explanation. Just the JSON object."
-        ),
-        messages=[{"role": "user", "content": text}],
-    )
-    raw = msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
-
-
 class ActivityRequest(BaseModel):
     text: str
 
 
 @app.post("/activity")
 def log_activity(req: ActivityRequest, uid: str = Depends(current_user)):
-    parsed = claude_parse_activity(req.text.strip())
+    parsed = claude_parse_log(req.text.strip())
     entry = {
         "id": str(uuid.uuid4()),
         "user_id": uid,
@@ -458,7 +446,53 @@ def log_activity(req: ActivityRequest, uid: str = Depends(current_user)):
         "logged_at": datetime.now(timezone.utc).isoformat(),
     }
     insert_manual_activity(entry)
-    return {k: v for k, v in entry.items() if k != "user_id"}
+    return {**{k: v for k, v in entry.items() if k != "user_id"}, "type": "activity"}
+
+
+class LogRequest(BaseModel):
+    text: str
+
+
+@app.post("/log")
+async def unified_log(req: LogRequest, uid: str = Depends(current_user)):
+    """Single endpoint — Claude decides if the input is food or activity."""
+    parsed = await run_in_threadpool(claude_parse_log, req.text.strip())
+    now = datetime.now(timezone.utc).isoformat()
+    entry_id = str(uuid.uuid4())
+
+    if parsed.get("type") == "activity":
+        entry = {
+            "id": entry_id,
+            "user_id": uid,
+            "date": today_str(),
+            "name": str(parsed.get("name", req.text.strip()))[:200],
+            "kcal": max(0, int(parsed.get("kcal", 0))),
+            "logged_at": now,
+        }
+        insert_manual_activity(entry)
+        return {
+            **{k: v for k, v in entry.items() if k != "user_id"},
+            "type": "activity",
+        }
+    else:
+        macros = {
+            "carbs_g": int(parsed.get("carbs_g") or 0),
+            "protein_g": int(parsed.get("protein_g") or 0),
+            "fat_g": int(parsed.get("fat_g") or 0),
+        }
+        entry = {
+            "id": entry_id,
+            "user_id": uid,
+            "date": today_str(),
+            "text": req.text.strip(),
+            "parsed": str(parsed.get("parsed", req.text.strip()))[:500],
+            "kcal": max(0, int(parsed.get("kcal") or 0)),
+            "macros_json": json.dumps(macros),
+            "logged_at": now,
+        }
+        insert_food_entry(entry)
+        result = {k: v for k, v in entry.items() if k not in ("user_id", "macros_json")}
+        return {**result, **macros, "type": "food"}
 
 
 @app.delete("/activity/{entry_id}")

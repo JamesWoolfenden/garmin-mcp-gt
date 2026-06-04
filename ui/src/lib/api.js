@@ -23,6 +23,7 @@ async function req(path, opts = {}) {
 }
 
 export const logFood      = (text) => req("/food", { method: "POST", body: JSON.stringify({ text }) });
+export const logEntry     = (text) => req("/log",  { method: "POST", body: JSON.stringify({ text }) });
 export const getTodayFood = ()     => req("/food/today");
 export const deleteFood     = (id)       => req(`/food/${id}`, { method: "DELETE" });
 export const logActivity    = (text) => req("/activity", { method: "POST", body: JSON.stringify({ text }) });
