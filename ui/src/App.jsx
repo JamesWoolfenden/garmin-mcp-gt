@@ -260,6 +260,7 @@ function Settings() {
         </button>
       </div>
       {open && (
+        <>
         <form onSubmit={save} style={{display:"flex",flexDirection:"column",gap:"10px",marginTop:"12px"}}>
           <label style={{fontSize:"13px",color:"var(--text)"}}>
             Daily kcal target
@@ -293,6 +294,7 @@ function Settings() {
           </button>
         </form>
         <GarminConnect nested />
+        </>
       )}
     </div>
   );
