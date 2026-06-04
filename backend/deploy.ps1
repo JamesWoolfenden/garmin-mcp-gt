@@ -38,8 +38,8 @@ gcloud run deploy $SERVICE `
   --region $REGION `
   --project $PROJECT `
   --allow-unauthenticated `
-  --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest,GARMIN_API_SECRET=garmin-api-secret:latest,VAPID_PRIVATE_KEY=vapid-private-key:latest,INTERNAL_SECRET=fuel-internal-secret:latest" `
-  --set-env-vars="GARMIN_SIDECAR_URL=https://fuel.wlfdn.dev,VAPID_EMAIL=james.woolfenden@gmail.com" `
+  --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest,VAPID_PRIVATE_KEY=vapid-private-key:latest,INTERNAL_SECRET=fuel-internal-secret:latest" `
+  --set-env-vars="VAPID_EMAIL=james.woolfenden@gmail.com" `
   --min-instances=0 `
   --max-instances=2 `
   --memory=512Mi `

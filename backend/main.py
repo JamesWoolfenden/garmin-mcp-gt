@@ -64,15 +64,17 @@ app = FastAPI(title="fuel-backend", docs_url=None, redoc_url=None)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://pike-477416.web.app", "http://localhost:3000"],
+    allow_origins=[
+        "https://fuel.wlfdn.dev",
+        "https://pike-477416.web.app",
+        "http://localhost:3000",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-GARMIN_URL = os.environ.get("GARMIN_SIDECAR_URL", "")
-GARMIN_SECRET = os.environ.get("GARMIN_API_SECRET", "")
 ANTHROPIC_CLIENT = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 VAPID_PRIVATE_KEY = os.environ["VAPID_PRIVATE_KEY"]
 VAPID_CLAIMS = {"sub": f"mailto:{os.environ.get('VAPID_EMAIL', 'you@example.com')}"}

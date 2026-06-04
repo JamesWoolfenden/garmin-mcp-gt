@@ -108,8 +108,8 @@ jobs:
             --platform managed \
             --region europe-west1 \
             --project pike-477416 \
-            --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest,GARMIN_API_SECRET=garmin-api-secret:latest,VAPID_PRIVATE_KEY=vapid-private-key:latest,INTERNAL_SECRET=fuel-internal-secret:latest,ALLOWED_EMAILS=fuel-allowed-emails:latest,ADMIN_UID=fuel-admin-uid:latest" \
-            --set-env-vars="GARMIN_SIDECAR_URL=https://fuel.wlfdn.dev,VAPID_EMAIL=james.woolfenden@gmail.com,LITESTREAM_GCS_BUCKET=pike-477416-sqlite" \
+            --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest,VAPID_PRIVATE_KEY=vapid-private-key:latest,INTERNAL_SECRET=fuel-internal-secret:latest,ALLOWED_EMAILS=fuel-allowed-emails:latest,ADMIN_UID=fuel-admin-uid:latest" \
+            --set-env-vars="VAPID_EMAIL=james.woolfenden@gmail.com,LITESTREAM_GCS_BUCKET=pike-477416-sqlite" \
             --service-account=fuel-backend@pike-477416.iam.gserviceaccount.com \
             --min-instances=0 \
             --max-instances=1 \
