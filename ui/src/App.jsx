@@ -199,16 +199,24 @@ function Settings() {
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState(null);
 
+  const applyProfile = (p) => {
+    setKcalTarget(String(p.kcal_target || 2000));
+    setNudgeTimes((p.nudge_times || []).join(", "));
+    setHeightCm(p.height_cm ? String(p.height_cm) : "");
+    setWaistCm(p.waist_cm ? String(p.waist_cm) : "");
+    setSaved(p);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    getProfile().then(p => { if (!cancelled) applyProfile(p); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [open]);
+
   useEffect(() => {
     let cancelled = false;
-    getProfile().then(p => {
-      if (cancelled) return;
-      setKcalTarget(String(p.kcal_target || 2000));
-      setNudgeTimes((p.nudge_times || []).join(", "));
-      setHeightCm(p.height_cm ? String(p.height_cm) : "");
-      setWaistCm(p.waist_cm ? String(p.waist_cm) : "");
-      setSaved({ kcal_target: p.kcal_target, nudge_times: p.nudge_times, height_cm: p.height_cm, waist_cm: p.waist_cm });
-    }).catch(() => {});
+    getProfile().then(p => { if (!cancelled) setSaved(p); }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
@@ -223,8 +231,8 @@ function Settings() {
         ...(heightCm ? { height_cm: parseInt(heightCm) } : {}),
         ...(waistCm ? { waist_cm: parseInt(waistCm) } : {}),
       };
-      await updateProfile(updates);
-      setSaved({ ...updates });
+      const saved = await updateProfile(updates);
+      applyProfile(saved);
       setOpen(false);
     } catch {
       // leave open on error
