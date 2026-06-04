@@ -99,7 +99,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             user_id         TEXT PRIMARY KEY,
             kcal_target     INTEGER NOT NULL DEFAULT 2000,
             nudge_times     TEXT NOT NULL DEFAULT '["08:00","13:00","15:00","20:00"]',
-            timezone        TEXT NOT NULL DEFAULT 'Europe/London'
+            timezone        TEXT NOT NULL DEFAULT 'Europe/London',
+            height_cm       INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS registered_users (
@@ -129,13 +130,16 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS manual_activities_user_date
             ON manual_activities(user_id, date);
     """)
-    # Migration: add macros_json if it doesn't exist yet
-    try:
-        conn.execute("ALTER TABLE food_entries ADD COLUMN macros_json TEXT")
-        conn.commit()
-    except sqlite3.OperationalError as e:
-        if "duplicate column name" not in str(e):
-            raise
+    for migration in [
+        "ALTER TABLE food_entries ADD COLUMN macros_json TEXT",
+        "ALTER TABLE user_profile ADD COLUMN height_cm INTEGER",
+    ]:
+        try:
+            conn.execute(migration)
+            conn.commit()
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e):
+                raise
 
     conn.commit()
 
@@ -385,6 +389,7 @@ DEFAULT_PROFILE = {
     "kcal_target": 2000,
     "nudge_times": ["08:00", "13:00", "15:00", "20:00"],
     "timezone": "Europe/London",
+    "height_cm": None,
 }
 
 
@@ -405,8 +410,8 @@ def upsert_profile(user_id: str, updates: dict) -> dict:
     current = get_profile(user_id)
     merged = {**current, **updates, "user_id": user_id}
     get_db().execute(
-        "INSERT OR REPLACE INTO user_profile (user_id, kcal_target, nudge_times, timezone) "
-        "VALUES (:user_id, :kcal_target, :nudge_times, :timezone)",
+        "INSERT OR REPLACE INTO user_profile (user_id, kcal_target, nudge_times, timezone, height_cm) "
+        "VALUES (:user_id, :kcal_target, :nudge_times, :timezone, :height_cm)",
         {**merged, "nudge_times": json.dumps(merged["nudge_times"])},
     )
     get_db().commit()

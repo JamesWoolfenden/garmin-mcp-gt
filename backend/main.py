@@ -683,6 +683,7 @@ class ProfileUpdate(BaseModel):
     kcal_target: int | None = None
     nudge_times: list[str] | None = None
     timezone: str | None = None
+    height_cm: int | None = None
 
 
 @app.get("/profile")

@@ -193,6 +193,7 @@ function Chat() {
 function Settings() {
   const [kcalTarget, setKcalTarget] = useState("");
   const [nudgeTimes, setNudgeTimes] = useState("");
+  const [heightCm, setHeightCm] = useState("");
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState(null);
@@ -203,7 +204,8 @@ function Settings() {
       if (cancelled) return;
       setKcalTarget(String(p.kcal_target || 2000));
       setNudgeTimes((p.nudge_times || []).join(", "));
-      setSaved({ kcal_target: p.kcal_target, nudge_times: p.nudge_times });
+      setHeightCm(p.height_cm ? String(p.height_cm) : "");
+      setSaved({ kcal_target: p.kcal_target, nudge_times: p.nudge_times, height_cm: p.height_cm });
     }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -213,8 +215,13 @@ function Settings() {
     setLoading(true);
     try {
       const times = nudgeTimes.split(",").map(t => t.trim()).filter(Boolean);
-      await updateProfile({ kcal_target: parseInt(kcalTarget), nudge_times: times });
-      setSaved({ kcal_target: parseInt(kcalTarget), nudge_times: times });
+      const updates = {
+        kcal_target: parseInt(kcalTarget),
+        nudge_times: times,
+        ...(heightCm ? { height_cm: parseInt(heightCm) } : {}),
+      };
+      await updateProfile(updates);
+      setSaved({ ...updates });
       setOpen(false);
     } catch {
       // leave open on error
@@ -230,7 +237,9 @@ function Settings() {
           <p style={{fontSize:"13px",color:"var(--muted)",fontWeight:500}}>Settings</p>
           {saved && !open && (
             <p style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px"}}>
-              {saved.kcal_target} kcal · nudges {(saved.nudge_times || []).join(", ")}
+              {saved.kcal_target} kcal
+              {saved.height_cm ? ` · ${saved.height_cm}cm` : ""}
+              {" · nudges "}{(saved.nudge_times || []).join(", ")}
             </p>
           )}
         </div>
@@ -242,25 +251,23 @@ function Settings() {
         <form onSubmit={save} style={{display:"flex",flexDirection:"column",gap:"10px",marginTop:"12px"}}>
           <label style={{fontSize:"13px",color:"var(--text)"}}>
             Daily kcal target
-            <input
-              className="log-input"
-              type="number"
-              value={kcalTarget}
+            <input className="log-input" type="number" value={kcalTarget}
               onChange={e => setKcalTarget(e.target.value)}
-              style={{display:"block",width:"100%",marginTop:"4px"}}
-              min="500" max="6000"
-            />
+              style={{display:"block",width:"100%",marginTop:"4px"}} min="500" max="6000" />
+          </label>
+          <label style={{fontSize:"13px",color:"var(--text)"}}>
+            Height (cm)
+            <input className="log-input" type="number" value={heightCm}
+              onChange={e => setHeightCm(e.target.value)}
+              style={{display:"block",width:"100%",marginTop:"4px"}} min="100" max="250"
+              placeholder="e.g. 178" />
           </label>
           <label style={{fontSize:"13px",color:"var(--text)"}}>
             Nudge times (comma-separated)
-            <input
-              className="log-input"
-              type="text"
-              value={nudgeTimes}
+            <input className="log-input" type="text" value={nudgeTimes}
               onChange={e => setNudgeTimes(e.target.value)}
               style={{display:"block",width:"100%",marginTop:"4px"}}
-              placeholder="08:00, 13:00, 15:00, 20:00"
-            />
+              placeholder="08:00, 13:00, 15:00, 20:00" />
           </label>
           <button className="log-btn" type="submit" disabled={loading}>
             {loading ? "Saving…" : "Save"}
