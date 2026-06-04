@@ -251,7 +251,6 @@ function Settings() {
           {open ? "Cancel" : "Edit"}
         </button>
       </div>
-      <GarminConnect nested />
       {open && (
         <form onSubmit={save} style={{display:"flex",flexDirection:"column",gap:"10px",marginTop:"12px"}}>
           <label style={{fontSize:"13px",color:"var(--text)"}}>
@@ -285,6 +284,7 @@ function Settings() {
             {loading ? "Saving…" : "Save"}
           </button>
         </form>
+        <GarminConnect nested />
       )}
     </div>
   );
