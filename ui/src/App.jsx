@@ -72,17 +72,16 @@ function ActivityEntry({ activity, onDelete }) {
 
 function ActivityForm({ onAdd }) {
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [kcal, setKcal] = useState("");
+  const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!name.trim() || !kcal) return;
+    if (!text.trim()) return;
     setLoading(true);
     try {
-      await onAdd(name.trim(), parseInt(kcal));
-      setName(""); setKcal(""); setOpen(false);
+      await onAdd(text.trim());
+      setText(""); setOpen(false);
     } finally {
       setLoading(false);
     }
@@ -94,11 +93,9 @@ function ActivityForm({ onAdd }) {
 
   return (
     <form className="activity-form" onSubmit={submit}>
-      <input className="log-input activity-name-input" value={name} onChange={e => setName(e.target.value)}
-        placeholder="e.g. 45min ride" autoFocus />
-      <input className="log-input activity-kcal-input" type="number" value={kcal} onChange={e => setKcal(e.target.value)}
-        placeholder="kcal" min="1" max="9999" />
-      <button className="log-btn" type="submit" disabled={loading || !name.trim() || !kcal}>
+      <input className="log-input activity-name-input" value={text} onChange={e => setText(e.target.value)}
+        placeholder="e.g. 10min indoor skydive" autoFocus autoComplete="off" />
+      <button className="log-btn" type="submit" disabled={loading || !text.trim()}>
         {loading ? "…" : "Add"}
       </button>
       <button type="button" className="delete-btn" style={{fontSize:"14px"}} onClick={() => setOpen(false)}>×</button>
@@ -460,8 +457,8 @@ export default function App() {
   const totalKcal = entries.reduce((s, e) => s + e.kcal, 0);
   const manualActivities = balance?.manual_activities || [];
 
-  const handleAddActivity = async (name, kcal) => {
-    await logActivity(name, kcal);
+  const handleAddActivity = async (text) => {
+    await logActivity(text);
     await loadData(viewDate);
   };
 

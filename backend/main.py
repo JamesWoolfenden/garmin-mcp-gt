@@ -425,19 +425,36 @@ def delete_food(entry_id: str, uid: str = Depends(current_user)):
 # -- Manual activities --------------------------------------------------------
 
 
+def claude_parse_activity(text: str) -> dict[str, Any]:
+    msg = ANTHROPIC_CLIENT.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=100,
+        system=(
+            "You are a fitness calorie estimator. Given a description of a physical activity, "
+            "return ONLY valid JSON with two fields: "
+            '"name" (string: concise activity label, e.g. "10min indoor skydiving"), '
+            '"kcal" (integer: estimated calories burned for an adult). '
+            "No preamble, no markdown, no explanation. Just the JSON object."
+        ),
+        messages=[{"role": "user", "content": text}],
+    )
+    raw = msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
+
+
 class ActivityRequest(BaseModel):
-    name: str
-    kcal: int
+    text: str
 
 
 @app.post("/activity")
 def log_activity(req: ActivityRequest, uid: str = Depends(current_user)):
+    parsed = claude_parse_activity(req.text.strip())
     entry = {
         "id": str(uuid.uuid4()),
         "user_id": uid,
         "date": today_str(),
-        "name": req.name.strip()[:200],
-        "kcal": max(0, req.kcal),
+        "name": str(parsed.get("name", req.text.strip()))[:200],
+        "kcal": max(0, int(parsed.get("kcal", 0))),
         "logged_at": datetime.now(timezone.utc).isoformat(),
     }
     insert_manual_activity(entry)

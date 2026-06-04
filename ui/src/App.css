@@ -60,7 +60,6 @@ body { font-family: var(--font); color: var(--text); -webkit-font-smoothing: ant
 .activity-add-btn:hover { color: var(--accent); }
 .activity-form { display: flex; gap: 6px; align-items: center; padding: 8px 0; }
 .activity-name-input { flex: 1; font-size: 14px; padding: 8px 10px; }
-.activity-kcal-input { width: 72px; font-size: 14px; padding: 8px 10px; }
 .entries-divider { height: 1px; background: var(--border); margin: 4px 0 8px; }
 .day-total { display: flex; justify-content: space-between; padding: 12px 20px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); font-weight: 500; }
 .day-total span:last-child { color: var(--text); }
