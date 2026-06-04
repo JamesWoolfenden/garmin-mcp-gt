@@ -2,8 +2,6 @@
 
 Garmin Connect MCP server — exposes your Garmin health and activity data as tools for Claude.
 
-<img src="docs/screenshot-app.png" alt="Fuel app — food log view" width="390" />
-
 ## Tools
 
 | Tool | Description |

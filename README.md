@@ -4,6 +4,8 @@ A calorie and activity tracker for cyclists, powered by Claude and Garmin Connec
 
 Log food in plain English, get a calorie balance against your activity, and ask questions about your fitness data — all from a mobile-friendly web app.
 
+<img src="docs/screenshot-app.png" alt="Fuel app — food log view" width="390" />
+
 ## Features
 
 - **Food logging** — describe what you ate in plain English; Claude estimates the calories
