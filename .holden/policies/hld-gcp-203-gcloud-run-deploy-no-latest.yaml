@@ -1,0 +1,26 @@
+id: HLD_GCP_203
+name: gcloud run deploy must not reference a mutable image tag
+principle: supply-chain
+severity: MEDIUM
+rationale: |
+  Deploying a Cloud Run service with --image referencing a mutable tag such as
+  :latest makes the deployment non-reproducible. If the tag is overwritten
+  between the build and deploy steps, a different — potentially malicious or
+  broken — image is deployed silently. Always supply a content-addressable
+  digest (sha256:...) or an immutable tag tied to the git commit SHA so the
+  exact image deployed is auditable and rollbacks are deterministic.
+remediation: |
+  Capture the digest after pushing and pass it to gcloud run deploy:
+
+    IMAGE="gcr.io/my-project/my-service:${{ github.sha }}"
+    docker build -t "$IMAGE" -f Dockerfile .
+    docker push "$IMAGE"
+    DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")
+    gcloud run deploy my-service --image "$DIGEST" ...
+resources:
+  gha_step:
+    filter:
+      path: run
+      matches: "gcloud run deploy"
+    path: run
+    not_matches: "--image [^\\s]*:latest"

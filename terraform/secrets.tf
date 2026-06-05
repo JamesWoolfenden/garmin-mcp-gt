@@ -1,5 +1,16 @@
 # Secret resources only — values are populated manually via setup_secrets.ps1.
 # Never store secret values in Terraform state.
+#
+# Per-secret IAM: intentionally NOT using a project-level secretmanager.secretAccessor
+# so new secrets added to the project are not automatically accessible to the backend SA.
+
+resource "google_secret_manager_secret_iam_member" "backend_access" {
+  for_each = local.backend_secrets
+
+  secret_id = each.value
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.fuel_backend.email}"
+}
 
 resource "google_secret_manager_secret" "anthropic_api_key" {
   secret_id = "anthropic-api-key"

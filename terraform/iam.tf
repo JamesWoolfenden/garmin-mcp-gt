@@ -13,7 +13,6 @@ resource "google_project_iam_member" "deploy_roles" {
   for_each = toset([
     "roles/run.developer",
     "roles/artifactregistry.writer",
-    "roles/secretmanager.secretAccessor",
     "roles/firebasehosting.admin",
   ])
   project = var.project_id
@@ -26,12 +25,6 @@ resource "google_service_account_iam_member" "deploy_actas_backend" {
   service_account_id = google_service_account.fuel_backend.name
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${local.deploy_sa}"
-}
-
-resource "google_project_iam_member" "backend_secret_access" {
-  project = var.project_id
-  role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.fuel_backend.email}"
 }
 
 

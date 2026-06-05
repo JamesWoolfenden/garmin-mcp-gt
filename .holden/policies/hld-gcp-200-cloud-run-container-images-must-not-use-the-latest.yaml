@@ -1,0 +1,26 @@
+id: HLD_GCP_200
+name: Cloud Run container images must not use the :latest tag
+principle: supply-chain
+severity: LOW
+rationale: |
+  Cloud Run services configured with a mutable :latest image tag cannot provide
+  reproducible deployments. On a fresh tofu apply the platform pulls whatever
+  image happens to be :latest at that moment, bypassing any digest-level integrity
+  guarantee. Using an explicit digest or version tag ensures the exact image is
+  deployed and makes rollbacks deterministic.
+remediation: |
+  Replace ':latest' with a specific image digest or version tag:
+
+    containers {
+      image = "gcr.io/my-project/my-service:v1.2.3"
+      # or
+      image = "gcr.io/my-project/my-service@sha256:<digest>"
+    }
+
+  If CI manages image updates, set the initial value to a known digest and use
+  lifecycle { ignore_changes = [template[0].containers[0].image] } for CI-driven
+  updates.
+resources:
+  google_cloud_run_v2_service:
+    path: template.containers.image
+    not_matches: ":latest$"

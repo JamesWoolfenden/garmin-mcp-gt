@@ -935,6 +935,144 @@ _GARMIN_TOOLS = [
         "description": "Get the most recent weight measurement from Garmin-connected scales.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
+    {
+        "name": "get_weather",
+        "description": (
+            "Get current weather and cycling forecast for a location using OpenMeteo. "
+            "Returns temperature, wind speed/direction, precipitation, and a rideable flag per day. "
+            "Use when the user asks about weather, whether to ride, or to correlate past performance with conditions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "latitude": {
+                    "type": "number",
+                    "description": "Location latitude (e.g. 51.45 for Reading, UK)",
+                },
+                "longitude": {
+                    "type": "number",
+                    "description": "Location longitude (e.g. -0.97 for Reading, UK)",
+                },
+                "days": {
+                    "type": "integer",
+                    "description": "Forecast days 1-7 (default 3)",
+                },
+            },
+            "required": ["latitude", "longitude"],
+        },
+    },
+    {
+        "name": "get_activity_weather",
+        "description": "Get weather conditions recorded by Garmin during a specific past activity.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "activity_id": {
+                    "type": "string",
+                    "description": "Garmin activity ID from get_recent_activities",
+                },
+            },
+            "required": ["activity_id"],
+        },
+    },
+    {
+        "name": "get_vo2max",
+        "description": "Get VO2max and lactate threshold history from Garmin.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to look back (default 30, max 365)",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_weight_trend",
+        "description": "Get weekly rolling weight averages to track fat loss progress without hydration noise.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "weeks": {
+                    "type": "integer",
+                    "description": "Number of weeks to look back (default 12, max 52)",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_cycling_ftp",
+        "description": "Get the user's current cycling FTP (functional threshold power) and W/kg.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_recent_activities",
+        "description": "Get recent cycling and running activities with distance, duration, HR, power, and elevation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of activities to return (default 10, max 50)",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_activity_fit",
+        "description": (
+            "Download the raw FIT file for an activity and return metrics not in the API: "
+            "Training Stress Score (TSS), Intensity Factor (IF), total work (kJ), "
+            "device FTP, and a per-lap breakdown with power, NP, HR, cadence, platform centre offset, "
+            "and temperature per lap. Use for training load analysis or to see if bike fit degrades with fatigue."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "activity_id": {
+                    "type": "string",
+                    "description": "Garmin activity ID from get_recent_activities",
+                },
+            },
+            "required": ["activity_id"],
+        },
+    },
+    {
+        "name": "get_activity_detail",
+        "description": (
+            "Get detailed metrics for a specific activity: HR/power zones, cadence, "
+            "left/right power balance, power phase angles, platform centre offset, and seated/standing split. "
+            "Use for bike fit analysis — call get_recent_activities first to get activity IDs."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "activity_id": {
+                    "type": "string",
+                    "description": "Garmin activity ID from get_recent_activities",
+                }
+            },
+            "required": ["activity_id"],
+        },
+    },
+    {
+        "name": "get_courses",
+        "description": "Get saved courses from Garmin Connect with distance, elevation, and activity type.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of courses to return (default 20, max 100)",
+                }
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -967,6 +1105,241 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
         elif tool_name == "get_weight":
             weight = g.get_weigh_ins(d_today, d_today)
             return weight or {"error": "No weight data"}
+        elif tool_name == "get_weather":
+            from garmin_mcp import get_weather as _get_weather
+
+            return _get_weather(
+                latitude=tool_input["latitude"],
+                longitude=tool_input["longitude"],
+                days=tool_input.get("days", 3),
+            )
+        elif tool_name == "get_activity_weather":
+            raw = g.get_activity_weather(tool_input["activity_id"])
+            if not raw:
+                return {"error": "No weather data for this activity"}
+            from garmin_mcp import _wind_dir
+
+            return {
+                "temp_c": raw.get("temperature"),
+                "feels_like_c": raw.get("apparentTemperature"),
+                "humidity_pct": raw.get("relativeHumidity"),
+                "wind_speed_kph": raw.get("windSpeed"),
+                "wind_direction": _wind_dir(raw.get("windDirection")),
+                "condition": raw.get("weatherTypePrimary"),
+                "precipitation_pct": raw.get("precipitationProbability"),
+            }
+        elif tool_name == "get_vo2max":
+            days_back = max(1, min(tool_input.get("days", 30), 365))
+            results = []
+            for i in range(days_back - 1, -1, -1):
+                d = (date.today() - timedelta(days=i)).isoformat()
+                try:
+                    raw = g.get_max_metrics(d)
+                    for entry in raw if isinstance(raw, list) else []:
+                        generic = entry.get("generic") or {}
+                        vo2 = generic.get("vo2MaxValue")
+                        lt_hr = generic.get("lactateThresholdHeartRate")
+                        lt_speed = generic.get("lactateThresholdSpeed")
+                        if vo2 or lt_hr:
+                            results.append(
+                                {
+                                    "date": d,
+                                    "vo2max": round(vo2, 1) if vo2 else None,
+                                    "lactate_threshold_hr_bpm": lt_hr,
+                                    "lactate_threshold_pace_min_per_km": round(
+                                        1000 / lt_speed / 60, 2
+                                    )
+                                    if lt_speed
+                                    else None,
+                                }
+                            )
+                            break
+                except Exception:
+                    continue
+            return results
+        elif tool_name == "get_weight_trend":
+            weeks = max(1, min(tool_input.get("weeks", 12), 52))
+            start = (date.today() - timedelta(days=weeks * 7 + 7)).isoformat()
+            data = g.get_weigh_ins(start, d_today)
+            by_date: dict[str, dict] = {}
+            for s in data.get("dailyWeightSummaries") or []:
+                w = s.get("latestWeight", {})
+                weight_g = w.get("weight")
+                if weight_g:
+                    by_date[s["summaryDate"]] = {
+                        "weight_kg": weight_g / 1000,
+                        "body_fat_pct": w.get("bodyFat"),
+                        "muscle_mass_kg": w.get("muscleMass") / 1000
+                        if w.get("muscleMass")
+                        else None,
+                    }
+            results = []
+            today_date = date.today()
+            for wk in range(weeks - 1, -1, -1):
+                week_end = today_date - timedelta(days=wk * 7)
+                week_start = week_end - timedelta(days=6)
+                readings = [
+                    by_date[str(week_start + timedelta(days=dd))]
+                    for dd in range(7)
+                    if str(week_start + timedelta(days=dd)) in by_date
+                ]
+                if not readings:
+                    continue
+                weights = [r["weight_kg"] for r in readings]
+                fats = [r["body_fat_pct"] for r in readings if r["body_fat_pct"]]
+                muscles = [r["muscle_mass_kg"] for r in readings if r["muscle_mass_kg"]]
+                results.append(
+                    {
+                        "week_start": week_start.isoformat(),
+                        "week_end": week_end.isoformat(),
+                        "readings": len(readings),
+                        "avg_weight_kg": round(sum(weights) / len(weights), 2),
+                        "avg_body_fat_pct": round(sum(fats) / len(fats), 1)
+                        if fats
+                        else None,
+                        "avg_muscle_mass_kg": round(sum(muscles) / len(muscles), 2)
+                        if muscles
+                        else None,
+                    }
+                )
+            for i in range(1, len(results)):
+                results[i]["change_from_prev_week_kg"] = round(
+                    results[i]["avg_weight_kg"] - results[i - 1]["avg_weight_kg"], 2
+                )
+            return results
+        elif tool_name == "get_cycling_ftp":
+            ftp_data = g.get_cycling_ftp()
+            ftp = None
+            if isinstance(ftp_data, dict):
+                ftp = ftp_data.get("functionalThresholdPower")
+            elif isinstance(ftp_data, list) and ftp_data:
+                ftp = ftp_data[0].get("functionalThresholdPower")
+            result: dict[str, Any] = {"ftp_watts": int(ftp) if ftp else None}
+            try:
+                start = (date.today() - timedelta(days=30)).isoformat()
+                weight_data = g.get_weigh_ins(start, d_today)
+                summaries = weight_data.get("dailyWeightSummaries") or []
+                if summaries and ftp:
+                    latest = sorted(summaries, key=lambda x: x.get("summaryDate", ""))[
+                        -1
+                    ]
+                    weight_g = latest.get("latestWeight", {}).get("weight")
+                    if weight_g:
+                        weight_kg = weight_g / 1000
+                        result["weight_kg"] = round(weight_kg, 2)
+                        result["w_per_kg"] = round(ftp / weight_kg, 2)
+            except Exception:
+                pass
+            return result
+        elif tool_name == "get_recent_activities":
+            limit = max(1, min(tool_input.get("limit", 10), 50))
+            from garmin_mcp import _dedup
+
+            raw = g.get_activities(0, limit * 2)
+            activities = _dedup(raw)[:limit]
+            return [
+                {
+                    "activity_id": a.get("activityId"),
+                    "date": a.get("startTimeLocal", "")[:10],
+                    "name": (a.get("activityName") or "")[:100],
+                    "type": a.get("activityType", {}).get("typeKey"),
+                    "distance_km": round(a.get("distance", 0) / 1000, 2),
+                    "duration_min": int(a.get("duration", 0) // 60),
+                    "avg_hr_bpm": a.get("averageHR"),
+                    "avg_power_w": a.get("avgPower"),
+                    "elevation_gain_m": a.get("elevationGain"),
+                    "calories": a.get("calories"),
+                }
+                for a in activities
+            ]
+        elif tool_name == "get_activity_fit":
+            from garminconnect import Garmin as _Garmin
+            from garmin_mcp import _parse_fit_zip
+
+            zip_bytes = g.download_activity(
+                tool_input["activity_id"],
+                dl_fmt=_Garmin.ActivityDownloadFormat.ORIGINAL,
+            )
+            return _parse_fit_zip(zip_bytes)
+        elif tool_name == "get_activity_detail":
+            activity_id = str(tool_input.get("activity_id", ""))
+            detail = g.get_activity(activity_id)
+            summary = detail.get("summaryDTO", {})
+            hr_zones = g.get_activity_hr_in_timezones(activity_id)
+            power_zones = g.get_activity_power_in_timezones(activity_id)
+            return {
+                "activity_id": activity_id,
+                "avg_hr_bpm": summary.get("averageHR"),
+                "max_hr_bpm": summary.get("maxHR"),
+                "avg_power_w": summary.get("averagePower") or summary.get("avgPower"),
+                "max_power_w": summary.get("maxPower"),
+                "normalized_power_w": summary.get("normalizedPower")
+                or summary.get("normPower"),
+                "avg_cadence_rpm": summary.get("averageBikeCadence")
+                or summary.get("averageBikingCadenceInRevPerMinute"),
+                "elevation_gain_m": summary.get("elevationGain"),
+                "calories": summary.get("calories"),
+                "seated_vs_standing": {
+                    "avg_seated_power_w": summary.get("averageSeatedPower"),
+                    "avg_standing_power_w": summary.get("averageStandingPower"),
+                    "seated_time_s": round(summary["seatedTime"])
+                    if summary.get("seatedTime")
+                    else None,
+                    "standing_time_s": round(summary["standingTime"])
+                    if summary.get("standingTime")
+                    else None,
+                    "standing_pct": round(
+                        summary["standingTime"]
+                        / (summary["seatedTime"] + summary["standingTime"])
+                        * 100,
+                        1,
+                    )
+                    if summary.get("seatedTime") and summary.get("standingTime")
+                    else None,
+                }
+                if summary.get("averageSeatedPower")
+                else None,
+                "left_right_balance": {
+                    "left_pct": summary.get("leftBalance"),
+                    "right_pct": summary.get("rightBalance"),
+                }
+                if summary.get("leftBalance")
+                else None,
+                "power_phase_left": {
+                    "start_deg": summary.get("leftPowerPhaseStart"),
+                    "end_deg": summary.get("leftPowerPhaseEnd"),
+                    "peak_start_deg": summary.get("leftPowerPhasePeakStart"),
+                    "peak_end_deg": summary.get("leftPowerPhasePeakEnd"),
+                    "platform_center_offset_mm": summary.get(
+                        "leftPlatformCenterOffset"
+                    ),
+                }
+                if summary.get("leftPowerPhaseStart")
+                else None,
+                "power_phase_right": {
+                    "start_deg": summary.get("rightPowerPhaseStart"),
+                    "end_deg": summary.get("rightPowerPhaseEnd"),
+                    "peak_start_deg": summary.get("rightPowerPhasePeakStart"),
+                    "peak_end_deg": summary.get("rightPowerPhasePeakEnd"),
+                    "platform_center_offset_mm": summary.get(
+                        "rightPlatformCenterOffset"
+                    ),
+                }
+                if summary.get("rightPowerPhaseStart")
+                else None,
+                "hr_zones_minutes": {
+                    f"zone_{z.get('zoneNumber')}": int(z.get("secsInZone", 0) // 60)
+                    for z in (hr_zones or [])
+                },
+                "power_zones_minutes": {
+                    f"zone_{z.get('zoneNumber')}": int(z.get("secsInZone", 0) // 60)
+                    for z in (power_zones or [])
+                },
+            }
+        elif tool_name == "get_courses":
+            from garmin_mcp import get_courses as _get_courses
+
+            return _get_courses(limit=tool_input.get("limit", 20))
         else:
             return {"error": f"Unknown tool: {tool_name}"}
 
@@ -996,7 +1369,10 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
         f"You are a personal health and fitness advisor for a cyclist. "
         f"Today is {today}. You have access to the user's Garmin data via tools. "
         f"Be concise and practical. Use tools when the user asks about their activity, "
-        f"sleep, heart rate, or fitness data."
+        f"sleep, heart rate, or fitness data. "
+        f"For bike fit analysis, call get_recent_activities to find cycling rides with power data, "
+        f"then get_activity_detail on 3-5 of them to check cadence, left/right balance, "
+        f"power phase, and platform centre offset across multiple rides."
     )
 
     # Build messages with history (last 10 turns) for conversational context

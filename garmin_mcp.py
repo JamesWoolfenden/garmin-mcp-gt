@@ -96,6 +96,147 @@ def get_today_stats() -> dict[str, Any]:
     }
 
 
+def _weather_code_desc(code: int | None) -> str:
+    codes = {
+        0: "Clear sky",
+        1: "Mainly clear",
+        2: "Partly cloudy",
+        3: "Overcast",
+        45: "Foggy",
+        48: "Icy fog",
+        51: "Light drizzle",
+        53: "Drizzle",
+        55: "Heavy drizzle",
+        61: "Light rain",
+        63: "Rain",
+        65: "Heavy rain",
+        71: "Light snow",
+        73: "Snow",
+        75: "Heavy snow",
+        80: "Light showers",
+        81: "Showers",
+        82: "Heavy showers",
+        95: "Thunderstorm",
+        96: "Thunderstorm with hail",
+        99: "Thunderstorm with heavy hail",
+    }
+    return codes.get(code, f"Code {code}") if code is not None else "Unknown"
+
+
+def _wind_dir(deg: float | None) -> str | None:
+    if deg is None:
+        return None
+    dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    return dirs[round(deg / 45) % 8]
+
+
+@mcp.tool()
+def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, Any]:
+    """Get current weather and cycling forecast using OpenMeteo (free, no API key needed).
+
+    Returns current conditions and a daily forecast with cycling-relevant metrics:
+    temperature, wind speed/direction, precipitation, and a 'rideable' flag.
+
+    Args:
+        latitude: Location latitude (e.g. 51.45 for Reading, UK).
+        longitude: Location longitude (e.g. -0.97 for Reading, UK).
+        days: Forecast days (1-7, default 3).
+    """
+    import json as _json
+    import urllib.parse
+    import urllib.request
+
+    days = max(1, min(days, 7))
+    params = urllib.parse.urlencode(
+        {
+            "latitude": latitude,
+            "longitude": longitude,
+            "current": ",".join(
+                [
+                    "temperature_2m",
+                    "apparent_temperature",
+                    "precipitation",
+                    "wind_speed_10m",
+                    "wind_direction_10m",
+                    "weather_code",
+                    "relative_humidity_2m",
+                ]
+            ),
+            "daily": ",".join(
+                [
+                    "temperature_2m_max",
+                    "temperature_2m_min",
+                    "precipitation_sum",
+                    "wind_speed_10m_max",
+                    "wind_direction_10m_dominant",
+                    "weather_code",
+                ]
+            ),
+            "wind_speed_unit": "mph",
+            "timezone": "auto",
+            "forecast_days": days,
+        }
+    )
+    with urllib.request.urlopen(
+        f"https://api.open-meteo.com/v1/forecast?{params}", timeout=10
+    ) as resp:
+        data = _json.loads(resp.read())
+
+    current = data.get("current", {})
+    daily = data.get("daily", {})
+
+    forecast = [
+        {
+            "date": d,
+            "condition": _weather_code_desc(daily["weather_code"][i]),
+            "temp_max_c": daily["temperature_2m_max"][i],
+            "temp_min_c": daily["temperature_2m_min"][i],
+            "precipitation_mm": daily["precipitation_sum"][i],
+            "max_wind_mph": daily["wind_speed_10m_max"][i],
+            "wind_direction": _wind_dir(daily["wind_direction_10m_dominant"][i]),
+            "rideable": (
+                daily["precipitation_sum"][i] < 2
+                and daily["wind_speed_10m_max"][i] < 25
+            ),
+        }
+        for i, d in enumerate(daily.get("time", []))
+    ]
+
+    return {
+        "current": {
+            "condition": _weather_code_desc(current.get("weather_code")),
+            "temp_c": current.get("temperature_2m"),
+            "feels_like_c": current.get("apparent_temperature"),
+            "humidity_pct": current.get("relative_humidity_2m"),
+            "precipitation_mm": current.get("precipitation"),
+            "wind_mph": current.get("wind_speed_10m"),
+            "wind_direction": _wind_dir(current.get("wind_direction_10m")),
+        },
+        "forecast": forecast,
+    }
+
+
+@mcp.tool()
+def get_activity_weather(activity_id: str) -> dict[str, Any]:
+    """Get weather conditions recorded by Garmin during a specific activity.
+
+    Args:
+        activity_id: Garmin activity ID (from get_recent_activities).
+    """
+    raw = client().get_activity_weather(activity_id)
+    if not raw:
+        return {"error": "No weather data for this activity"}
+    return {
+        "temp_c": raw.get("temperature"),
+        "feels_like_c": raw.get("apparentTemperature"),
+        "humidity_pct": raw.get("relativeHumidity"),
+        "wind_speed_kph": raw.get("windSpeed"),
+        "wind_direction": _wind_dir(raw.get("windDirection")),
+        "condition": raw.get("weatherTypePrimary"),
+        "precipitation_pct": raw.get("precipitationProbability"),
+    }
+
+
 @mcp.tool()
 def get_recent_activities(limit: int = 10) -> list[dict[str, Any]]:
     """Return the most recent cycling/running activities, de-duplicated.
@@ -124,8 +265,51 @@ def get_recent_activities(limit: int = 10) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
+def get_courses(limit: int = 20) -> list[dict[str, Any]]:
+    """Return saved courses from Garmin Connect.
+
+    Args:
+        limit: Number of courses to return (default 20, max 100).
+    """
+    limit = max(1, min(limit, 100))
+    raw = client().connectapi(
+        "/course-service/course", params={"start": 0, "limit": limit}
+    )
+    if not isinstance(raw, list):
+        raw = raw.get("courseList") or [] if isinstance(raw, dict) else []
+    return [
+        {
+            "course_id": c.get("courseId"),
+            "name": (c.get("courseName") or "")[:100],
+            "type": c.get("activityType", {}).get("typeKey")
+            if isinstance(c.get("activityType"), dict)
+            else c.get("activityType"),
+            "distance_km": round(c.get("distanceInMeters", 0) / 1000, 2)
+            if c.get("distanceInMeters")
+            else None,
+            "elevation_gain_m": c.get("elevationGainInMeters"),
+            "created": (c.get("createdDateFormatted") or "")[:10],
+        }
+        for c in raw
+    ]
+
+
+@mcp.tool()
 def get_activity_detail(activity_id: str) -> dict[str, Any]:
-    """Return detailed metrics for a specific activity including HR zones and power zones.
+    """Return detailed metrics for a specific activity including HR zones, power zones, and bike fit indicators.
+
+    Bike fit interpretation guide (flag concerns when pattern is consistent across rides):
+    - left_right_balance: >5% asymmetry sustained = saddle position, cleat, or leg length issue.
+      3-5% is borderline; <3% is normal.
+    - power_phase (start/end degrees, 0=top dead centre, 180=bottom):
+      Normal effective zone is roughly 330-170 deg. A short arc (<160 deg) means dead spots.
+      Left/right arc length difference >15 deg suggests asymmetric hip/knee mechanics.
+    - platform_center_offset_mm: how far from pedal centre the foot sits. Consistent offset
+      one side suggests cleat lateral position or stack height adjustment needed.
+    - seated_vs_standing: high standing_pct (>15%) at moderate power can indicate saddle
+      too low or too far forward, causing loss of power when seated.
+    - avg_cadence_rpm: <75 rpm self-selected = saddle likely too low; >95 with low power
+      = saddle possibly too high or too far back.
 
     Args:
         activity_id: The Garmin activity ID (from get_recent_activities).
@@ -149,15 +333,61 @@ def get_activity_detail(activity_id: str) -> dict[str, Any]:
         "activity_id": activity_id,
         "avg_hr_bpm": summary.get("averageHR"),
         "max_hr_bpm": summary.get("maxHR"),
-        "avg_power_w": summary.get("avgPower"),
+        "avg_power_w": summary.get("averagePower") or summary.get("avgPower"),
         "max_power_w": summary.get("maxPower"),
-        "normalized_power_w": summary.get("normPower"),
-        "avg_cadence_rpm": summary.get("averageBikingCadenceInRevPerMinute")
+        "normalized_power_w": summary.get("normalizedPower")
+        or summary.get("normPower"),
+        "avg_cadence_rpm": summary.get("averageBikeCadence")
+        or summary.get("averageBikingCadenceInRevPerMinute")
         or summary.get("averageRunningCadenceInStepsPerMinute"),
         "elevation_gain_m": summary.get("elevationGain"),
         "calories": summary.get("calories"),
+        "seated_vs_standing": {
+            "avg_seated_power_w": summary.get("averageSeatedPower"),
+            "avg_standing_power_w": summary.get("averageStandingPower"),
+            "seated_time_s": round(summary["seatedTime"])
+            if summary.get("seatedTime")
+            else None,
+            "standing_time_s": round(summary["standingTime"])
+            if summary.get("standingTime")
+            else None,
+            "standing_pct": round(
+                summary["standingTime"]
+                / (summary["seatedTime"] + summary["standingTime"])
+                * 100,
+                1,
+            )
+            if summary.get("seatedTime") and summary.get("standingTime")
+            else None,
+        }
+        if summary.get("averageSeatedPower")
+        else None,
         "aerobic_training_effect": summary.get("aerobicTrainingEffect"),
         "anaerobic_training_effect": summary.get("anaerobicTrainingEffect"),
+        "left_right_balance": {
+            "left_pct": summary.get("leftBalance"),
+            "right_pct": summary.get("rightBalance"),
+        }
+        if summary.get("leftBalance")
+        else None,
+        "power_phase_left": {
+            "start_deg": summary.get("leftPowerPhaseStart"),
+            "end_deg": summary.get("leftPowerPhaseEnd"),
+            "peak_start_deg": summary.get("leftPowerPhasePeakStart"),
+            "peak_end_deg": summary.get("leftPowerPhasePeakEnd"),
+            "platform_center_offset_mm": summary.get("leftPlatformCenterOffset"),
+        }
+        if summary.get("leftPowerPhaseStart")
+        else None,
+        "power_phase_right": {
+            "start_deg": summary.get("rightPowerPhaseStart"),
+            "end_deg": summary.get("rightPowerPhaseEnd"),
+            "peak_start_deg": summary.get("rightPowerPhasePeakStart"),
+            "peak_end_deg": summary.get("rightPowerPhasePeakEnd"),
+            "platform_center_offset_mm": summary.get("rightPlatformCenterOffset"),
+        }
+        if summary.get("rightPowerPhaseStart")
+        else None,
         "hr_zones_minutes": {
             f"zone_{z.get('zoneNumber')}": int(z.get("secsInZone", 0) // 60)
             for z in (hr_zones or [])
@@ -167,6 +397,88 @@ def get_activity_detail(activity_id: str) -> dict[str, Any]:
             for z in (power_zones or [])
         },
     }
+
+
+def _parse_fit_zip(zip_bytes: bytes) -> dict[str, Any]:
+    """Extract TSS, IF, kJ, threshold power, and per-lap breakdown from a FIT zip."""
+    import io
+    import zipfile
+
+    from garmin_fit_sdk import Decoder, Stream
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+        fit_name = next((n for n in z.namelist() if n.endswith(".fit")), None)
+        if not fit_name:
+            raise ValueError("No .fit file found in download")
+        fit_bytes = z.read(fit_name)
+
+    stream = Stream.from_bytes_io(io.BytesIO(fit_bytes))
+    decoder = Decoder(stream)
+    messages, _ = decoder.read(
+        apply_scale_and_offset=True,
+        convert_types_to_strings=True,
+        expand_sub_fields=True,
+        expand_components=True,
+    )
+
+    sess = (messages.get("session_mesgs") or [{}])[0]
+    laps = messages.get("lap_mesgs") or []
+
+    def _lap_dict(lap: dict, i: int) -> dict:
+        elapsed = lap.get("total_elapsed_time") or 0
+        return {
+            "lap": i + 1,
+            "distance_km": round((lap.get("total_distance") or 0) / 1000, 2),
+            "duration_min": round(elapsed / 60, 1),
+            "avg_power_w": lap.get("avg_power"),
+            "normalized_power_w": lap.get("normalized_power"),
+            "avg_hr_bpm": lap.get("avg_heart_rate"),
+            "avg_cadence_rpm": lap.get("avg_cadence"),
+            "total_work_kj": round((lap.get("total_work") or 0) / 1000, 1),
+            "avg_left_pco_mm": lap.get("avg_left_pco"),
+            "avg_right_pco_mm": lap.get("avg_right_pco"),
+            "avg_temperature_c": lap.get("avg_temperature"),
+            "total_ascent_m": lap.get("total_ascent"),
+        }
+
+    return {
+        "tss": sess.get("training_stress_score"),
+        "intensity_factor": sess.get("intensity_factor"),
+        "total_work_kj": round((sess.get("total_work") or 0) / 1000, 1),
+        "threshold_power_w": sess.get("threshold_power"),
+        "training_load": sess.get("training_load_peak"),
+        "avg_temperature_c": sess.get("avg_temperature"),
+        "laps": [_lap_dict(lap, i) for i, lap in enumerate(laps)],
+    }
+
+
+@mcp.tool()
+def get_activity_fit(activity_id: str) -> dict[str, Any]:
+    """Download the raw FIT file for an activity and return metrics not available via the API.
+
+    Extracts: Training Stress Score (TSS), Intensity Factor (IF), total work (kJ),
+    device-configured threshold power (FTP), and a per-lap breakdown with power,
+    normalised power, HR, cadence, platform centre offset, and temperature.
+
+    TSS and IF require FTP to be configured on the device. PCO per lap shows whether
+    position degrades with fatigue — useful for bike fit analysis across a ride.
+
+    Args:
+        activity_id: Garmin activity ID (from get_recent_activities).
+    """
+    try:
+        _id = int(activity_id)
+        if _id <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise ValueError(
+            f"activity_id must be a positive integer, got: {activity_id!r}"
+        )
+
+    zip_bytes = client().download_activity(
+        activity_id, dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL
+    )
+    return _parse_fit_zip(zip_bytes)
 
 
 def _analyse_heart_rates(data: dict, d: str) -> dict[str, Any]:
@@ -383,6 +695,45 @@ def get_weekly_trends(weeks: int = 8) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
+def get_vo2max(days: int = 30) -> list[dict[str, Any]]:
+    """Return VO2max and lactate threshold history from Garmin.
+
+    Args:
+        days: Number of days to look back (default 30, max 365).
+    """
+    days = max(1, min(days, 365))
+    today = date.today()
+    results = []
+    c = client()
+    for i in range(days - 1, -1, -1):
+        d = (today - timedelta(days=i)).isoformat()
+        try:
+            raw = c.get_max_metrics(d)
+            for entry in raw if isinstance(raw, list) else []:
+                generic = entry.get("generic") or {}
+                vo2 = generic.get("vo2MaxValue")
+                lt_hr = generic.get("lactateThresholdHeartRate")
+                lt_speed = generic.get("lactateThresholdSpeed")
+                if vo2 or lt_hr:
+                    results.append(
+                        {
+                            "date": d,
+                            "vo2max": round(vo2, 1) if vo2 else None,
+                            "lactate_threshold_hr_bpm": lt_hr,
+                            "lactate_threshold_pace_min_per_km": round(
+                                1000 / lt_speed / 60, 2
+                            )
+                            if lt_speed
+                            else None,
+                        }
+                    )
+                    break
+        except Exception:
+            continue
+    return results
+
+
+@mcp.tool()
 def get_cycling_ftp() -> dict[str, Any]:
     """Return the user's current cycling Functional Threshold Power (FTP) and W/kg.
 
@@ -421,7 +772,7 @@ def get_cycling_ftp() -> dict[str, Any]:
 def get_weight(days: int = 30) -> list[dict[str, Any]]:
     """Return weigh-in history from Garmin Index scale for the last N days.
 
-    Includes weight, BMI, body fat %, body water %, muscle mass, and daily change.
+    Includes weight, body fat % (primary body composition metric), muscle mass, body water %, and BMI (included for reference, but less meaningful than body fat % when scale data is available).
 
     Args:
         days: Number of days to look back (default 30, max 365).
@@ -537,8 +888,15 @@ def _setup() -> None:
             print("Connection successful.")
         except Exception as e:
             print(f"Connection failed: {e}")
-            print("Delete the token directory and run garmin-setup again.")
-        return
+            answer = input("Re-authenticate now? [y/N] ").strip().lower()
+            if answer != "y":
+                return
+            import shutil
+
+            shutil.rmtree(token_path)
+            print("Tokens cleared.")
+        else:
+            return
 
     email = input("Garmin email: ")
     password = getpass("Garmin password: ")

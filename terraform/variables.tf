@@ -49,6 +49,12 @@ variable "github_repo" {
   }
 }
 
+variable "image_tag" {
+  description = "Full image reference (registry/name@digest) for the Cloud Run container. Passed by CI after build; defaults to :latest for bootstrap only."
+  type        = string
+  default     = "gcr.io/pike-477416/fuel-backend:latest"
+}
+
 variable "internal_secret" {
   description = "Value of the fuel-internal-secret Secret Manager secret"
   type        = string

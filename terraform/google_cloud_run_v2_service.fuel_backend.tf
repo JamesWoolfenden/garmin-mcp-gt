@@ -11,7 +11,7 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
     }
 
     containers {
-      image = "gcr.io/${var.project_id}/fuel-backend:latest"
+      image = var.image_tag
 
       resources {
         limits = {
@@ -104,8 +104,7 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
 
   lifecycle {
     ignore_changes = [
-      template[0].containers[0].image, # managed by CI
-      client,                          # set by gcloud, not Terraform
+      client,         # set by gcloud, not Terraform
       client_version,
     ]
   }

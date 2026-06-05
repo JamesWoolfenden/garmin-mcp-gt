@@ -55,21 +55,56 @@ That's it. Your Garmin data is now available in the app and the Ask tab will use
 
 **Tokens expire** periodically (weeks to months). Re-run `garmin-setup` then `garmin-upload-tokens` when needed.
 
-## Using with Claude Code / Claude Desktop
+## Using as an MCP server (Claude Code / Claude Desktop)
 
-`garmin-mcp-gt` is also an MCP server for use in Claude Code sessions. After `pip install garmin-mcp-gt` and `garmin-setup`, add to `~/.claude/settings.json`:
+`garmin-mcp-gt` is a standalone MCP server — no app account needed. After installing and authenticating, Claude can query your Garmin data directly in any conversation.
+
+### Setup
+
+```bash
+pip install garmin-mcp-gt
+garmin-setup        # authenticate with your Garmin Connect account once
+```
+
+Then add to `~/.claude/settings.json` (Claude Code) or your Claude Desktop config:
 
 ```json
 {
   "mcpServers": {
     "garmin": {
-      "command": "garmin-mcp-gt"
+      "command": "garmin-mcp"
     }
   }
 }
 ```
 
-Then ask Claude things like "am I sedentary today?" or "how does my sleep affect my training load?".
+### Available tools
+
+| Tool | Description |
+|------|-------------|
+| `get_today_stats` | Steps, distance, calories, active minutes, resting HR, body battery |
+| `get_recent_activities` | Last N cycling/running activities with distance, duration, HR, power |
+| `get_activity_detail` | Detailed metrics for one activity: HR/power zones, cadence, left/right power balance, power phase angles, platform centre offset — useful for bike fit analysis |
+| `get_activity_fit` | Downloads the raw FIT file and returns TSS, Intensity Factor, total work (kJ), device FTP, and a per-lap breakdown — data not available via the Garmin API |
+| `get_sedentary_analysis` | How sedentary a day was — sedentary/light/moderate/active time breakdown |
+| `get_sleep` | Sleep score, stages (deep/REM/light), SpO2, stress |
+| `get_hrv` | Overnight HRV history — key recovery metric |
+| `get_weekly_trends` | Weekly cycling summary: km, hours, average power |
+| `get_cycling_ftp` | Current FTP and W/kg |
+| `get_vo2max` | VO2max and lactate threshold history |
+| `get_weight` | Weigh-in history: weight, body fat %, muscle mass |
+| `get_weight_trend` | Weekly rolling weight averages to track fat loss without hydration noise |
+| `get_weather` | Current conditions and cycling forecast via OpenMeteo (free, no API key) — includes rideable flag per day |
+| `get_activity_weather` | Weather recorded by Garmin during a specific past activity |
+| `get_courses` | Saved courses from Garmin Connect with distance and elevation |
+
+### Example questions
+
+- "How did I sleep last night?"
+- "Am I sedentary today?"
+- "Analyse my bike fit from my last 5 rides"
+- "How does my HRV trend compare to my training load this week?"
+- "What's my W/kg and how has my weight changed this month?"
 
 ## Architecture
 
