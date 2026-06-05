@@ -81,7 +81,7 @@ app.add_middleware(
 ANTHROPIC_CLIENT = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 VAPID_PRIVATE_KEY = os.environ["VAPID_PRIVATE_KEY"]
 VAPID_CLAIMS = {"sub": f"mailto:{os.environ.get('VAPID_EMAIL', 'you@example.com')}"}
-INTERNAL_SECRET = os.environ.get("INTERNAL_SECRET", "")
+INTERNAL_SECRET = os.environ["INTERNAL_SECRET"]
 ADMIN_UID = os.environ.get("ADMIN_UID", "")
 _ALLOWED_EMAILS: set[str] = {
     e.strip().lower()
@@ -805,7 +805,7 @@ def admin_delete_user(target_uid: str, uid: str = Depends(admin_user)):
 @app.post("/internal/nudge")
 async def nudge(request: Request):
     secret = request.headers.get("X-Internal-Secret", "")
-    if INTERNAL_SECRET and secret != INTERNAL_SECRET:
+    if not INTERNAL_SECRET or secret != INTERNAL_SECRET:
         raise HTTPException(status_code=401)
 
     pushed_total = 0
