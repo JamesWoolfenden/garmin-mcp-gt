@@ -57,8 +57,9 @@ def _dedup(activities: list[dict]) -> list[dict]:
     for candidates in buckets.values():
         best = min(
             candidates,
-            key=lambda a: TYPE_PREF.get(
-                a.get("activityType", {}).get("typeKey", ""), 99
+            key=lambda a: (
+                TYPE_PREF.get(a.get("activityType", {}).get("typeKey", ""), 99),
+                -a.get("distance", 0),
             ),
         )
         out.append(best)
