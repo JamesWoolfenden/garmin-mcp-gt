@@ -6,7 +6,7 @@ resource "time_sleep" "iam_propagation" {
   create_duration = "120s"
 
   depends_on = [
-    google_project_iam_member.backend_secret_access,
+    google_secret_manager_secret_iam_member.backend_access,
     google_kms_crypto_key_iam_member.backend_encrypter,
     google_kms_crypto_key_iam_member.backend_sqlite_encrypter,
     google_storage_bucket_iam_member.sqlite_backend,

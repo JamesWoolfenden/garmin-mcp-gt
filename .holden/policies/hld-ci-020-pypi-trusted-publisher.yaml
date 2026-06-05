@@ -1,0 +1,32 @@
+id: HLD_CI_020
+name: PyPI publish steps must use trusted publisher (OIDC), not an API token
+principle: supply-chain
+severity: MEDIUM
+rationale: |
+  Passing a PyPI API token via the password input of pypa/gh-action-pypi-publish
+  stores a long-lived static credential in GitHub Secrets. If the secret is leaked
+  or the token is stolen, an attacker can publish arbitrary packages to PyPI
+  indefinitely. PyPI's trusted publisher mechanism uses short-lived OIDC tokens
+  exchanged at publish time — no static credential is stored, the token is scoped
+  to the specific repo and workflow, and PyPI generates signed attestations for
+  every release automatically.
+remediation: |
+  Remove the password input and add id-token: write to the job permissions:
+
+    jobs:
+      publish:
+        permissions:
+          id-token: write
+        steps:
+          - uses: pypa/gh-action-pypi-publish@<sha>
+            # no password: input needed — OIDC handles authentication
+
+  Then configure a trusted publisher on PyPI at:
+  https://pypi.org/manage/project/<your-package>/settings/publishing/
+resources:
+  gha_step:
+    filter:
+      path: uses
+      matches: "pypa/gh-action-pypi-publish"
+    path: with.password
+    absent: true

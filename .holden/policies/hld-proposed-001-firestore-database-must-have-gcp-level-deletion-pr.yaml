@@ -13,5 +13,5 @@ remediation: |
   google_firestore_database resource block.
 resources:
   google_firestore_database:
-    not_equals:
-      delete_protection_state: DELETE_PROTECTION_ENABLED
+    path: delete_protection_state
+    equals: DELETE_PROTECTION_ENABLED

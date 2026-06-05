@@ -50,9 +50,13 @@ variable "github_repo" {
 }
 
 variable "image_tag" {
-  description = "Full image reference (registry/name@digest) for the Cloud Run container. Passed by CI after build; defaults to :latest for bootstrap only."
+  description = "Full image reference (registry/name@digest) for the Cloud Run container. Passed by CI after build; the default is a bootstrap placeholder only."
   type        = string
-  default     = "gcr.io/pike-477416/fuel-backend:latest"
+  default     = "gcr.io/pike-477416/fuel-backend:bootstrap"
+  validation {
+    condition     = length(var.image_tag) > 0
+    error_message = "image_tag must be a non-empty image reference."
+  }
 }
 
 variable "internal_secret" {

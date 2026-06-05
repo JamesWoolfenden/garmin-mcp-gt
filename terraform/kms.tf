@@ -8,6 +8,7 @@ resource "google_kms_crypto_key" "garmin_tokens" {
   name            = "garmin-tokens"
   key_ring        = google_kms_key_ring.fuel.id
   rotation_period = "7776000s" # 90 days
+  description     = "Encrypts Garmin OAuth tokens stored per-user in SQLite"
 
   lifecycle {
     prevent_destroy = true
@@ -30,6 +31,7 @@ resource "google_kms_crypto_key" "sqlite_data" {
   name            = "sqlite-data"
   key_ring        = google_kms_key_ring.fuel_regional.id
   rotation_period = "7776000s" # 90 days
+  description     = "Encrypts the SQLite database backup bucket (GCS CMEK)"
 
   lifecycle {
     prevent_destroy = true

@@ -16,7 +16,6 @@ backend/public_key.pem
 *.tfstate
 *.tfstate.backup
 *.tfplan
-.terraform.lock.hcl
 terraform/terraform.tfvars
 
 # Python

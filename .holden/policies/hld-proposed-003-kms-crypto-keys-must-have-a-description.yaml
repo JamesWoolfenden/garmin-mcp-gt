@@ -12,5 +12,5 @@ remediation: |
   explaining what data this key protects and in which environment.
 resources:
   google_kms_crypto_key:
-    not_null:
-      description: true
+    path: description
+    not_null: true
