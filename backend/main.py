@@ -1060,6 +1060,24 @@ _GARMIN_TOOLS = [
         },
     },
     {
+        "name": "compare_dual_recordings",
+        "description": (
+            "Compare HR and power metrics between two recordings of the same ride on different devices. "
+            "Use when the user asks how their chest-strap HRM compares to optical HR, or wants to "
+            "compare data from two devices recording the same ride."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "description": "Date to compare (YYYY-MM-DD, default today)",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "get_courses",
         "description": "Get saved courses from Garmin Connect with distance, elevation, and activity type.",
         "input_schema": {
@@ -1335,6 +1353,72 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
                     f"zone_{z.get('zoneNumber')}": int(z.get("secsInZone", 0) // 60)
                     for z in (power_zones or [])
                 },
+            }
+        elif tool_name == "compare_dual_recordings":
+            target = tool_input.get("date") or date.today().isoformat()
+            raw = g.get_activities(0, 50)
+            day_acts = [a for a in raw if a.get("startTimeLocal", "")[:10] == target]
+            if len(day_acts) < 2:
+                return {
+                    "error": f"Fewer than 2 activities on {target} — no dual recording to compare"
+                }
+
+            def _slot(a: dict) -> int:
+                ts = a.get("startTimeLocal", "")
+                try:
+                    return (int(ts[11:13]) * 60 + int(ts[14:16])) // 10
+                except (ValueError, IndexError):
+                    return -1
+
+            from collections import defaultdict
+
+            slots: dict[int, list] = defaultdict(list)
+            for a in day_acts:
+                slots[_slot(a)].append(a)
+            pair = next((acts[:2] for acts in slots.values() if len(acts) >= 2), None)
+            if not pair:
+                return {"error": f"No overlapping recordings on {target}"}
+
+            def _metrics(a: dict) -> dict:
+                aid = str(a.get("activityId"))
+                detail = g.get_activity(aid)
+                summary = detail.get("summaryDTO", {})
+                hr_zones = g.get_activity_hr_in_timezones(aid)
+                return {
+                    "activity_id": aid,
+                    "type": a.get("activityType", {}).get("typeKey"),
+                    "distance_km": round(a.get("distance", 0) / 1000, 2),
+                    "duration_min": int(a.get("duration", 0) // 60),
+                    "avg_hr_bpm": summary.get("averageHR"),
+                    "max_hr_bpm": summary.get("maxHR"),
+                    "avg_power_w": summary.get("averagePower")
+                    or summary.get("avgPower"),
+                    "hr_zones_minutes": {
+                        f"zone_{z.get('zoneNumber')}": int(z.get("secsInZone", 0) // 60)
+                        for z in (hr_zones or [])
+                    },
+                }
+
+            ma, mb = _metrics(pair[0]), _metrics(pair[1])
+
+            def _diff(key: str):
+                va, vb = ma.get(key), mb.get(key)
+                return round(va - vb, 1) if va is not None and vb is not None else None
+
+            return {
+                "date": target,
+                "recording_a": ma,
+                "recording_b": mb,
+                "differences_a_minus_b": {
+                    "avg_hr_bpm": _diff("avg_hr_bpm"),
+                    "max_hr_bpm": _diff("max_hr_bpm"),
+                    "avg_power_w": _diff("avg_power_w"),
+                    "distance_km": _diff("distance_km"),
+                },
+                "interpretation": (
+                    "Positive difference means recording_a reads higher. "
+                    "avg_hr_bpm difference indicates optical vs chest-strap HR divergence."
+                ),
             }
         elif tool_name == "get_courses":
             from garmin_mcp import get_courses as _get_courses

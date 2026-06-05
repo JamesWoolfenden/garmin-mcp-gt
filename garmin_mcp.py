@@ -266,6 +266,93 @@ def get_recent_activities(limit: int = 10) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
+def compare_dual_recordings(date: str | None = None) -> dict[str, Any]:
+    """Compare HR and power metrics between two recordings of the same ride on different devices.
+
+    Useful when the same ride is recorded on both a head unit (with chest-strap HRM)
+    and a watch (with optical HR), to assess how closely the optical sensor tracks the
+    chest strap. Returns side-by-side metrics and a difference summary.
+
+    Args:
+        date: Date to compare (YYYY-MM-DD, default today).
+    """
+    target = date or datetime.today().strftime("%Y-%m-%d")
+    c = client()
+
+    raw = c.get_activities(0, 50)
+    day_acts = [a for a in raw if a.get("startTimeLocal", "")[:10] == target]
+
+    if len(day_acts) < 2:
+        return {
+            "error": f"Fewer than 2 activities on {target} — no dual recording to compare"
+        }
+
+    def _slot(a: dict) -> int:
+        ts = a.get("startTimeLocal", "")
+        try:
+            return (int(ts[11:13]) * 60 + int(ts[14:16])) // 10
+        except (ValueError, IndexError):
+            return -1
+
+    from collections import defaultdict
+
+    slots: dict[int, list] = defaultdict(list)
+    for a in day_acts:
+        slots[_slot(a)].append(a)
+
+    pair = next((acts[:2] for acts in slots.values() if len(acts) >= 2), None)
+    if not pair:
+        return {
+            "error": f"No overlapping recordings on {target} — activities start more than 10 minutes apart"
+        }
+
+    def _metrics(a: dict) -> dict:
+        aid = str(a.get("activityId"))
+        detail = c.get_activity(aid)
+        summary = detail.get("summaryDTO", {})
+        hr_zones = c.get_activity_hr_in_timezones(aid)
+        return {
+            "activity_id": aid,
+            "name": (a.get("activityName") or "")[:100],
+            "type": a.get("activityType", {}).get("typeKey"),
+            "distance_km": round(a.get("distance", 0) / 1000, 2),
+            "duration_min": int(a.get("duration", 0) // 60),
+            "avg_hr_bpm": summary.get("averageHR"),
+            "max_hr_bpm": summary.get("maxHR"),
+            "avg_power_w": summary.get("averagePower") or summary.get("avgPower"),
+            "avg_cadence_rpm": summary.get("averageBikeCadence")
+            or summary.get("averageBikingCadenceInRevPerMinute"),
+            "hr_zones_minutes": {
+                f"zone_{z.get('zoneNumber')}": int(z.get("secsInZone", 0) // 60)
+                for z in (hr_zones or [])
+            },
+        }
+
+    ma, mb = _metrics(pair[0]), _metrics(pair[1])
+
+    def _diff(key: str) -> float | None:
+        va, vb = ma.get(key), mb.get(key)
+        return round(va - vb, 1) if va is not None and vb is not None else None
+
+    return {
+        "date": target,
+        "recording_a": ma,
+        "recording_b": mb,
+        "differences_a_minus_b": {
+            "avg_hr_bpm": _diff("avg_hr_bpm"),
+            "max_hr_bpm": _diff("max_hr_bpm"),
+            "avg_power_w": _diff("avg_power_w"),
+            "distance_km": _diff("distance_km"),
+        },
+        "interpretation": (
+            "Positive difference means recording_a reads higher. "
+            "avg_hr_bpm difference indicates optical vs chest-strap HR divergence. "
+            "Expect optical HR to lag and smooth peaks — large differences suggest optical sensor struggled."
+        ),
+    }
+
+
+@mcp.tool()
 def get_courses(limit: int = 20) -> list[dict[str, Any]]:
     """Return saved courses from Garmin Connect.
 
