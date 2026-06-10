@@ -487,6 +487,536 @@ def get_activity_detail(activity_id: str) -> dict[str, Any]:
     }
 
 
+def _fit_avg(vals: list) -> float | None:
+    clean = [v for v in vals if v is not None]
+    return round(sum(clean) / len(clean), 1) if clean else None
+
+
+def _fit_arc(start: float | None, end: float | None) -> float | None:
+    if start is None or end is None:
+        return None
+    return round((end - start) % 360, 1)
+
+
+def _collect_fit_rides(acts: list[dict], c) -> list[dict]:
+    per_ride = []
+    for act in acts:
+        aid = str(act.get("activityId"))
+        s = c.get_activity(aid).get("summaryDTO", {})
+
+        left_bal = s.get("leftBalance")
+        right_bal = s.get("rightBalance")
+        cadence = s.get("averageBikeCadence") or s.get(
+            "averageBikingCadenceInRevPerMinute"
+        )
+        left_arc = _fit_arc(s.get("leftPowerPhaseStart"), s.get("leftPowerPhaseEnd"))
+        right_arc = _fit_arc(s.get("rightPowerPhaseStart"), s.get("rightPowerPhaseEnd"))
+        left_pco = s.get("leftPlatformCenterOffset")
+        right_pco = s.get("rightPlatformCenterOffset")
+
+        standing_pct = None
+        if s.get("seatedTime") and s.get("standingTime"):
+            total = s["seatedTime"] + s["standingTime"]
+            standing_pct = round(s["standingTime"] / total * 100, 1)
+
+        per_ride.append(
+            {
+                "activity_id": aid,
+                "date": act.get("startTimeLocal", "")[:10],
+                "name": (act.get("activityName") or "")[:60],
+                "avg_cadence_rpm": cadence,
+                "avg_power_w": s.get("averagePower") or s.get("avgPower"),
+                "lr_balance": {
+                    "left_pct": left_bal,
+                    "right_pct": right_bal,
+                    "asymmetry_pct": round(abs(left_bal - right_bal), 1),
+                }
+                if left_bal and right_bal
+                else None,
+                "power_phase_arc_deg": {
+                    "left": left_arc,
+                    "right": right_arc,
+                    "difference": round(abs(left_arc - right_arc), 1)
+                    if left_arc and right_arc
+                    else None,
+                }
+                if left_arc or right_arc
+                else None,
+                "platform_center_offset_mm": {
+                    "left": left_pco,
+                    "right": right_pco,
+                }
+                if left_pco or right_pco
+                else None,
+                "standing_pct": standing_pct,
+            }
+        )
+    return per_ride
+
+
+def _aggregate_fit(per_ride: list[dict]) -> dict[str, Any]:
+    avg_cadence = _fit_avg([r["avg_cadence_rpm"] for r in per_ride])
+    avg_power = _fit_avg([r["avg_power_w"] for r in per_ride])
+
+    lr_rides = [r["lr_balance"] for r in per_ride if r.get("lr_balance")]
+    avg_asymmetry = _fit_avg([r["asymmetry_pct"] for r in lr_rides])
+    avg_left_pct = _fit_avg([r["left_pct"] for r in lr_rides])
+
+    arc_rides = [
+        r["power_phase_arc_deg"] for r in per_ride if r.get("power_phase_arc_deg")
+    ]
+    avg_left_arc = _fit_avg([r["left"] for r in arc_rides])
+    avg_right_arc = _fit_avg([r["right"] for r in arc_rides])
+    avg_arc_diff = _fit_avg(
+        [r["difference"] for r in arc_rides if r.get("difference") is not None]
+    )
+
+    pco_rides = [
+        r["platform_center_offset_mm"]
+        for r in per_ride
+        if r.get("platform_center_offset_mm")
+    ]
+    avg_left_pco = _fit_avg([r["left"] for r in pco_rides])
+    avg_right_pco = _fit_avg([r["right"] for r in pco_rides])
+    pco_diff = (
+        round(abs(avg_left_pco - avg_right_pco), 1)
+        if avg_left_pco and avg_right_pco
+        else None
+    )
+
+    avg_standing = _fit_avg(
+        [r["standing_pct"] for r in per_ride if r.get("standing_pct") is not None]
+    )
+
+    signals: list[dict[str, Any]] = []
+
+    if avg_cadence is not None:
+        if avg_cadence < 75:
+            signals.append(
+                {
+                    "signal": "cadence_low",
+                    "severity": "high" if avg_cadence < 70 else "moderate",
+                    "avg_value": avg_cadence,
+                    "threshold": 75,
+                    "interpretation": "Self-selected cadence below 75 rpm — saddle is likely too low.",
+                    "suggestion": "Raise saddle 3–5 mm and retest cadence on a steady-state ride.",
+                }
+            )
+        elif avg_cadence > 95 and avg_power is not None and avg_power < 200:
+            signals.append(
+                {
+                    "signal": "cadence_high",
+                    "severity": "low",
+                    "avg_value": avg_cadence,
+                    "threshold": 95,
+                    "interpretation": "High cadence at moderate power may indicate saddle too high or too far back.",
+                    "suggestion": "Check saddle height and fore-aft position.",
+                }
+            )
+
+    if avg_asymmetry is not None:
+        if avg_asymmetry > 5:
+            signals.append(
+                {
+                    "signal": "lr_imbalance_severe",
+                    "severity": "high",
+                    "avg_value": avg_asymmetry,
+                    "avg_left_pct": avg_left_pct,
+                    "threshold": 5,
+                    "interpretation": "Left/right power asymmetry >5% sustained — indicates a fit issue.",
+                    "suggestion": "Check saddle lateral position, cleat alignment, and leg length difference.",
+                }
+            )
+        elif avg_asymmetry > 3:
+            signals.append(
+                {
+                    "signal": "lr_imbalance_moderate",
+                    "severity": "moderate",
+                    "avg_value": avg_asymmetry,
+                    "avg_left_pct": avg_left_pct,
+                    "threshold": 3,
+                    "interpretation": "Left/right asymmetry 3–5% is borderline — monitor across more rides.",
+                    "suggestion": "Check cleat position on the weaker side. Reassess after any equipment changes.",
+                }
+            )
+
+    for side, avg_arc in (("left", avg_left_arc), ("right", avg_right_arc)):
+        if avg_arc is not None and avg_arc < 160:
+            signals.append(
+                {
+                    "signal": f"power_phase_dead_spot_{side}",
+                    "severity": "moderate",
+                    "avg_value": avg_arc,
+                    "threshold": 160,
+                    "interpretation": f"Short {side} power phase arc — dead spot in pedal stroke, power not applied through full rotation.",
+                    "suggestion": "Check saddle height and fore-aft; add single-leg drill work.",
+                }
+            )
+
+    if avg_arc_diff is not None and avg_arc_diff > 15:
+        signals.append(
+            {
+                "signal": "power_phase_asymmetric",
+                "severity": "moderate",
+                "avg_value": avg_arc_diff,
+                "threshold": 15,
+                "interpretation": "Left/right power phase arc differs by >15° — asymmetric hip/knee mechanics.",
+                "suggestion": "Assess hip mobility and cleat/saddle position on the shorter-arc side.",
+            }
+        )
+
+    if pco_diff is not None and pco_diff > 3:
+        signals.append(
+            {
+                "signal": "platform_offset_asymmetric",
+                "severity": "low",
+                "avg_value": pco_diff,
+                "avg_left_mm": avg_left_pco,
+                "avg_right_mm": avg_right_pco,
+                "threshold": 3,
+                "interpretation": "Platform centre offset differs >3 mm between sides.",
+                "suggestion": "Adjust cleat lateral position on the offset side.",
+            }
+        )
+
+    if avg_standing is not None and avg_standing > 15:
+        signals.append(
+            {
+                "signal": "high_standing_pct",
+                "severity": "moderate",
+                "avg_value": avg_standing,
+                "threshold": 15,
+                "interpretation": "Standing >15% at moderate power may indicate saddle too low or too far forward.",
+                "suggestion": "Check saddle height and fore-aft position.",
+            }
+        )
+
+    return {
+        "rides_analysed": len(per_ride),
+        "aggregated": {
+            "avg_cadence_rpm": avg_cadence,
+            "avg_lr_asymmetry_pct": avg_asymmetry,
+            "avg_left_pct": avg_left_pct,
+            "avg_power_phase_arc_deg": {
+                "left": avg_left_arc,
+                "right": avg_right_arc,
+                "difference": avg_arc_diff,
+            }
+            if avg_left_arc or avg_right_arc
+            else None,
+            "avg_platform_center_offset_mm": {
+                "left": avg_left_pco,
+                "right": avg_right_pco,
+                "difference": pco_diff,
+            }
+            if avg_left_pco or avg_right_pco
+            else None,
+            "avg_standing_pct": avg_standing,
+        },
+        "signals": signals,
+    }
+
+
+def _compare_fit(before: dict, after: dict) -> list[dict[str, Any]]:
+    changes = []
+    ba = before.get("aggregated", {})
+    aa = after.get("aggregated", {})
+
+    def _change(metric: str, b_val, a_val, lower_is_better: bool = True) -> None:
+        if b_val is None or a_val is None:
+            return
+        delta = round(a_val - b_val, 1)
+        if lower_is_better:
+            direction = (
+                "improved"
+                if delta < -0.5
+                else ("worsened" if delta > 0.5 else "unchanged")
+            )
+        else:
+            direction = (
+                "improved"
+                if delta > 0.5
+                else ("worsened" if delta < -0.5 else "unchanged")
+            )
+        changes.append(
+            {
+                "metric": metric,
+                "before": b_val,
+                "after": a_val,
+                "delta": delta,
+                "direction": direction,
+            }
+        )
+
+    bc, ac = ba.get("avg_cadence_rpm"), aa.get("avg_cadence_rpm")
+    if bc and ac:
+
+        def _cad_dist(v: float) -> float:
+            return 0.0 if 75 <= v <= 90 else (75 - v if v < 75 else v - 90)
+
+        delta = round(ac - bc, 1)
+        direction = (
+            "improved"
+            if _cad_dist(ac) < _cad_dist(bc)
+            else ("worsened" if _cad_dist(ac) > _cad_dist(bc) else "unchanged")
+        )
+        changes.append(
+            {
+                "metric": "avg_cadence_rpm",
+                "before": bc,
+                "after": ac,
+                "delta": delta,
+                "direction": direction,
+            }
+        )
+
+    _change(
+        "avg_lr_asymmetry_pct",
+        ba.get("avg_lr_asymmetry_pct"),
+        aa.get("avg_lr_asymmetry_pct"),
+    )
+    _change(
+        "power_phase_arc_difference_deg",
+        (ba.get("avg_power_phase_arc_deg") or {}).get("difference"),
+        (aa.get("avg_power_phase_arc_deg") or {}).get("difference"),
+    )
+    _change(
+        "platform_offset_difference_mm",
+        (ba.get("avg_platform_center_offset_mm") or {}).get("difference"),
+        (aa.get("avg_platform_center_offset_mm") or {}).get("difference"),
+    )
+    return changes
+
+
+@mcp.tool()
+def get_bike_fit_analysis(rides: int = 5, since: str | None = None) -> dict[str, Any]:
+    """Aggregate bike fit metrics across recent rides and surface actionable fit signals.
+
+    Fetches the last N cycling activities, extracts fit indicators from each, and returns
+    averaged metrics and flagged signals. One call replaces manually interpreting multiple
+    get_activity_detail results.
+
+    When `since` is provided, splits rides into before/after that date and returns a
+    side-by-side comparison with a `changes` list showing what improved or worsened.
+    Use this to measure the effect of a saddle adjustment, cleat change, or shim.
+
+    Signals and what triggers them:
+    - cadence_low: avg cadence <75 rpm → saddle likely too low
+    - cadence_high: avg cadence >95 rpm at moderate power → saddle possibly too high or too far back
+    - lr_imbalance_severe: avg L/R asymmetry >5% → consistent fit issue (saddle, cleat, leg length)
+    - lr_imbalance_moderate: avg L/R asymmetry 3–5% → borderline, monitor across more rides
+    - power_phase_dead_spot_left/right: avg arc <160° → dead spot in pedal stroke
+    - power_phase_asymmetric: left/right arc differs >15° → asymmetric hip/knee mechanics
+    - platform_offset_asymmetric: left/right platform centre offset differs >3 mm → cleat lateral position
+    - high_standing_pct: avg standing >15% at moderate power → saddle too low or too far forward
+
+    Args:
+        rides: Number of recent cycling rides to analyse per group (default 5, max 10).
+        since: Optional ISO date (YYYY-MM-DD). When set, compares rides before vs from that
+               date to measure the impact of a fit change.
+    """
+    rides = max(1, min(rides, 10))
+    c = client()
+
+    raw = c.get_activities(0, max(rides * 6, 30))
+    all_cycling = [
+        a
+        for a in _dedup(raw)
+        if "cycling" in (a.get("activityType", {}).get("typeKey") or "").lower()
+        or "biking" in (a.get("activityType", {}).get("typeKey") or "").lower()
+    ]
+
+    if not all_cycling:
+        return {"error": "No recent cycling activities found"}
+
+    if since is None:
+        per_ride = _collect_fit_rides(all_cycling[:rides], c)
+        result = _aggregate_fit(per_ride)
+        result["per_ride"] = per_ride
+        return result
+
+    after_acts = [a for a in all_cycling if a.get("startTimeLocal", "")[:10] >= since][
+        :rides
+    ]
+    before_acts = [a for a in all_cycling if a.get("startTimeLocal", "")[:10] < since][
+        :rides
+    ]
+
+    before_rides = _collect_fit_rides(before_acts, c) if before_acts else []
+    after_rides = _collect_fit_rides(after_acts, c) if after_acts else []
+    before_agg = _aggregate_fit(before_rides) if before_rides else None
+    after_agg = _aggregate_fit(after_rides) if after_rides else None
+
+    all_per_ride = sorted(
+        [dict(r, period="before") for r in before_rides]
+        + [dict(r, period="after") for r in after_rides],
+        key=lambda r: r["date"],
+        reverse=True,
+    )
+
+    return {
+        "since": since,
+        "before": before_agg,
+        "after": after_agg,
+        "changes": _compare_fit(before_agg, after_agg)
+        if before_agg and after_agg
+        else [],
+        "per_ride": all_per_ride,
+    }
+
+
+@mcp.tool()
+def get_ride_fatigue_analysis(activity_id: str) -> dict[str, Any]:
+    """Analyse how bike position and performance degrade across a ride using per-lap FIT data.
+
+    Downloads the raw FIT file and examines per-lap trends in platform centre offset (PCO),
+    cadence, power, and HR to identify fatigue-related position breakdown. Compares the
+    first and last thirds of the ride.
+
+    Signals:
+    - pco_drift_left/right: PCO shifts >3 mm first-to-last third → position breaking down under fatigue
+    - cadence_drop: cadence falls >5 rpm first-to-last third
+    - power_fade_severe: power drops >20% first-to-last third (more than typical aerobic fade)
+
+    Args:
+        activity_id: Garmin activity ID (from get_recent_activities).
+    """
+    try:
+        _id = int(activity_id)
+        if _id <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise ValueError(
+            f"activity_id must be a positive integer, got: {activity_id!r}"
+        )
+
+    zip_bytes = client().download_activity(
+        activity_id, dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL
+    )
+    fit = _parse_fit_zip(zip_bytes)
+    laps = fit.get("laps", [])
+
+    if len(laps) < 3:
+        return {
+            "activity_id": activity_id,
+            "laps_total": len(laps),
+            "error": f"Only {len(laps)} lap(s) recorded — need at least 3 for fatigue analysis",
+            "per_lap": laps,
+        }
+
+    n = len(laps)
+    third = max(1, n // 3)
+    early = laps[:third]
+    late = laps[n - third :]
+
+    def _lap_avg(lap_list: list, key: str) -> float | None:
+        vals = [lap.get(key) for lap in lap_list if lap.get(key) is not None]
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    def _delta(a, b) -> float | None:
+        return round(a - b, 1) if a is not None and b is not None else None
+
+    early_power = _lap_avg(early, "avg_power_w")
+    late_power = _lap_avg(late, "avg_power_w")
+    early_cadence = _lap_avg(early, "avg_cadence_rpm")
+    late_cadence = _lap_avg(late, "avg_cadence_rpm")
+    early_hr = _lap_avg(early, "avg_hr_bpm")
+    late_hr = _lap_avg(late, "avg_hr_bpm")
+    early_left_pco = _lap_avg(early, "avg_left_pco_mm")
+    late_left_pco = _lap_avg(late, "avg_left_pco_mm")
+    early_right_pco = _lap_avg(early, "avg_right_pco_mm")
+    late_right_pco = _lap_avg(late, "avg_right_pco_mm")
+
+    signals: list[dict[str, Any]] = []
+
+    for side, e_pco, l_pco in (
+        ("left", early_left_pco, late_left_pco),
+        ("right", early_right_pco, late_right_pco),
+    ):
+        if e_pco is not None and l_pco is not None:
+            drift = round(abs(l_pco - e_pco), 1)
+            if drift > 3:
+                signals.append(
+                    {
+                        "signal": f"pco_drift_{side}",
+                        "severity": "high" if drift > 6 else "moderate",
+                        "early_avg_mm": e_pco,
+                        "late_avg_mm": l_pco,
+                        "drift_mm": drift,
+                        "interpretation": f"{side.capitalize()} platform centre offset drifted {drift} mm — position breaking down under fatigue.",
+                        "suggestion": "Build core and on-bike endurance. Check saddle stability and cleat security.",
+                    }
+                )
+
+    if early_cadence is not None and late_cadence is not None:
+        drop = round(early_cadence - late_cadence, 1)
+        if drop > 5:
+            signals.append(
+                {
+                    "signal": "cadence_drop",
+                    "severity": "high" if drop > 10 else "moderate",
+                    "early_avg_rpm": early_cadence,
+                    "late_avg_rpm": late_cadence,
+                    "drop_rpm": drop,
+                    "interpretation": f"Cadence dropped {drop} rpm from early to late laps.",
+                    "suggestion": "Cadence maintenance drills. May indicate saddle too low, amplifying fatigue effect.",
+                }
+            )
+
+    if early_power and late_power and early_power > 0:
+        fade_pct = round((early_power - late_power) / early_power * 100, 1)
+        if fade_pct > 20:
+            signals.append(
+                {
+                    "signal": "power_fade_severe",
+                    "severity": "high" if fade_pct > 35 else "moderate",
+                    "early_avg_w": early_power,
+                    "late_avg_w": late_power,
+                    "fade_pct": fade_pct,
+                    "interpretation": f"Power dropped {fade_pct}% from early to late laps — more than typical aerobic fade.",
+                    "suggestion": "Review pacing strategy. If position is also breaking down, fit may be contributing to early fatigue.",
+                }
+            )
+
+    return {
+        "activity_id": activity_id,
+        "laps_total": n,
+        "summary": {
+            "early_laps": f"1–{third}",
+            "late_laps": f"{n - third + 1}–{n}",
+            "early_vs_late": {
+                "power_w": {
+                    "early": early_power,
+                    "late": late_power,
+                    "delta": _delta(late_power, early_power),
+                },
+                "cadence_rpm": {
+                    "early": early_cadence,
+                    "late": late_cadence,
+                    "delta": _delta(late_cadence, early_cadence),
+                },
+                "hr_bpm": {
+                    "early": early_hr,
+                    "late": late_hr,
+                    "delta": _delta(late_hr, early_hr),
+                },
+                "left_pco_mm": {
+                    "early": early_left_pco,
+                    "late": late_left_pco,
+                    "delta": _delta(late_left_pco, early_left_pco),
+                },
+                "right_pco_mm": {
+                    "early": early_right_pco,
+                    "late": late_right_pco,
+                    "delta": _delta(late_right_pco, early_right_pco),
+                },
+            },
+        },
+        "signals": signals,
+        "per_lap": laps,
+    }
+
+
 def _parse_fit_zip(zip_bytes: bytes) -> dict[str, Any]:
     """Extract TSS, IF, kJ, threshold power, and per-lap breakdown from a FIT zip."""
     import io
