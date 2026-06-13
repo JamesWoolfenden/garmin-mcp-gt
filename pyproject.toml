@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "garmin-mcp-gt"
-version = "0.1.6"
+version = "0.1.7"
 description = "Garmin Connect MCP server — exposes health and activity data as tools for Claude"
 readme = "README.md"
 license = { file = "LICENSE" }
