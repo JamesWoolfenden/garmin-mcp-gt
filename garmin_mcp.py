@@ -47,21 +47,37 @@ TYPE_PREF = {"road_biking": 0, "cycling": 1}
 
 
 def _dedup(activities: list[dict]) -> list[dict]:
-    buckets: dict[tuple, list] = {}
-    for a in activities:
-        day = a.get("startTimeLocal", "")[:10]
-        dist = round(a.get("distance", 0) / 2000) * 2
-        buckets.setdefault((day, dist), []).append(a)
+    def _interval(a: dict):
+        try:
+            start = datetime.fromisoformat(a.get("startTimeLocal", ""))
+        except ValueError:
+            return None, None
+        end = start + timedelta(seconds=a.get("duration", 0))
+        return start, end
+
+    def _overlaps(a: dict, b: dict) -> bool:
+        s1, e1 = _interval(a)
+        s2, e2 = _interval(b)
+        if not (s1 and s2):
+            return False
+        return s1 < e2 and s2 < e1
+
+    sorted_acts = sorted(activities, key=lambda a: a.get("startTimeLocal", ""))
+    groups: list[list[dict]] = []
+
+    for a in sorted_acts:
+        merged = False
+        for g in groups:
+            if any(_overlaps(a, member) for member in g):
+                g.append(a)
+                merged = True
+                break
+        if not merged:
+            groups.append([a])
 
     out = []
-    for candidates in buckets.values():
-        best = min(
-            candidates,
-            key=lambda a: (
-                TYPE_PREF.get(a.get("activityType", {}).get("typeKey", ""), 99),
-                -a.get("distance", 0),
-            ),
-        )
+    for candidates in groups:
+        best = max(candidates, key=lambda a: a.get("duration", 0))
         out.append(best)
 
     out.sort(key=lambda a: a.get("startTimeLocal", ""), reverse=True)
