@@ -1118,6 +1118,39 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
     import garmin_mcp as gm
     from datetime import timedelta
 
+    # DB-only tools — no Garmin session required
+    if tool_name == "get_food_log":
+        target_date = tool_input.get("date") or date.today().isoformat()
+        entries = get_food_entries(uid, target_date)
+        total_kcal = sum(e["kcal"] for e in entries)
+        total_protein = total_carbs = total_fat = 0
+        items = []
+        for e in entries:
+            m = json.loads(e.get("macros_json") or "{}")
+            total_protein += m.get("protein_g", 0)
+            total_carbs += m.get("carbs_g", 0)
+            total_fat += m.get("fat_g", 0)
+            items.append(
+                {
+                    "food": e["parsed"],
+                    "kcal": e["kcal"],
+                    "protein_g": m.get("protein_g", 0),
+                    "carbs_g": m.get("carbs_g", 0),
+                    "fat_g": m.get("fat_g", 0),
+                    "logged_at": e["logged_at"],
+                }
+            )
+        return {
+            "date": target_date,
+            "entries": items,
+            "totals": {
+                "kcal": total_kcal,
+                "protein_g": total_protein,
+                "carbs_g": total_carbs,
+                "fat_g": total_fat,
+            },
+        }
+
     with GarminSession(uid) as g:
         d_today = date.today().isoformat()
         offset = tool_input.get("offset_days", 0)
@@ -1443,37 +1476,6 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
             from garmin_mcp import get_courses as _get_courses
 
             return _get_courses(limit=tool_input.get("limit", 20))
-        elif tool_name == "get_food_log":
-            target_date = tool_input.get("date") or date.today().isoformat()
-            entries = get_food_entries(uid, target_date)
-            total_kcal = sum(e["kcal"] for e in entries)
-            total_protein = total_carbs = total_fat = 0
-            items = []
-            for e in entries:
-                m = json.loads(e.get("macros_json") or "{}")
-                total_protein += m.get("protein_g", 0)
-                total_carbs += m.get("carbs_g", 0)
-                total_fat += m.get("fat_g", 0)
-                items.append(
-                    {
-                        "food": e["parsed"],
-                        "kcal": e["kcal"],
-                        "protein_g": m.get("protein_g", 0),
-                        "carbs_g": m.get("carbs_g", 0),
-                        "fat_g": m.get("fat_g", 0),
-                        "logged_at": e["logged_at"],
-                    }
-                )
-            return {
-                "date": target_date,
-                "entries": items,
-                "totals": {
-                    "kcal": total_kcal,
-                    "protein_g": total_protein,
-                    "carbs_g": total_carbs,
-                    "fat_g": total_fat,
-                },
-            }
         else:
             return {"error": f"Unknown tool: {tool_name}"}
 
