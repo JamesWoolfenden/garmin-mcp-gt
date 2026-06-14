@@ -463,9 +463,13 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      await logEntry(input.trim());
+      const newEntry = await logEntry(input.trim());
       setInput("");
-      await loadData(viewDate);
+      if (newEntry.type === "food") {
+        setEntries(prev => [newEntry, ...prev]);
+      }
+      // Refresh balance in background — don't block on Garmin + Claude
+      loadData(viewDate);
     } catch (e) {
       setError("Failed to log — try again");
     } finally {
@@ -475,9 +479,10 @@ export default function App() {
   };
 
   const handleDelete = async (id) => {
+    setEntries(prev => prev.filter(e => e.id !== id));
     try {
       await deleteFood(id);
-      await loadData(viewDate);
+      loadData(viewDate);
     } catch (e) {
       setError("Could not remove entry");
     }
@@ -488,7 +493,7 @@ export default function App() {
 
   const handleDeleteActivity = async (id) => {
     await deleteActivity(id);
-    await loadData(viewDate);
+    loadData(viewDate);
   };
 
   if (user === undefined) return <div className="app"><p style={{padding:"2rem"}}>Loading…</p></div>;

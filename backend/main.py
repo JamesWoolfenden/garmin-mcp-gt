@@ -14,8 +14,10 @@ Endpoints:
     POST /internal/nudge   (called by Cloud Scheduler)
 """
 
+import asyncio
 import json
 import os
+import time
 import uuid
 from datetime import date, datetime, timezone
 from typing import Any
@@ -90,6 +92,12 @@ _ALLOWED_EMAILS: set[str] = {
 }
 
 firebase_admin.initialize_app(options={"projectId": "pike-477416"})
+
+# 5-minute in-process cache for Garmin data (stats, activities, wellness).
+# Cloud Run max_instance_count=1 so this is safe; avoids 3 × (KMS + Garmin auth)
+# on every food log / balance refresh within the same 5-minute window.
+_garmin_cache: dict[str, tuple[float, tuple]] = {}
+_GARMIN_TTL = 300
 
 
 async def current_user(request: Request) -> str:
@@ -193,7 +201,7 @@ async def fetch_garmin_activities(uid: str) -> list[dict] | None:
 def claude_parse_log(text: str) -> dict[str, Any]:
     """Classify text as food or activity, then extract the relevant fields."""
     msg = ANTHROPIC_CLIENT.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-haiku-4-5-20251001",
         max_tokens=350,
         system=(
             "You are a fitness and nutrition logger. Given free text, decide if it describes "
@@ -347,7 +355,7 @@ def claude_recommend(
         )
 
     msg = ANTHROPIC_CLIENT.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-haiku-4-5-20251001",
         max_tokens=175,
         system=(
             "You are an encouraging fitness and nutrition coach for a cyclist. "
@@ -554,6 +562,30 @@ def _aggregate_entries(entries: list) -> dict:
     }
 
 
+async def _fetch_garmin_data(uid: str) -> tuple:
+    """Return (garmin, activities, wellness) with a 5-minute in-process cache."""
+    cached = _garmin_cache.get(uid)
+    if cached and time.time() - cached[0] < _GARMIN_TTL:
+        return cached[1]
+
+    garmin, activities, wellness = await asyncio.gather(
+        fetch_garmin(uid),
+        fetch_garmin_activities(uid),
+        run_in_threadpool(_garmin_wellness, uid),
+        return_exceptions=True,
+    )
+    if isinstance(garmin, Exception):
+        garmin = None
+    if isinstance(activities, Exception):
+        activities = None
+    if isinstance(wellness, Exception):
+        wellness = {}
+
+    result = (garmin, activities, wellness)
+    _garmin_cache[uid] = (time.time(), result)
+    return result
+
+
 async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
     target_date = for_date or today_str()
     entries = get_food_entries(uid, target_date)
@@ -589,20 +621,7 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
             "garmin_available": False,
         }
 
-    import asyncio
-
-    garmin, activities, wellness = await asyncio.gather(
-        fetch_garmin(uid),
-        fetch_garmin_activities(uid),
-        run_in_threadpool(_garmin_wellness, uid),
-        return_exceptions=True,
-    )
-    if isinstance(garmin, Exception):
-        garmin = None
-    if isinstance(activities, Exception):
-        activities = None
-    if isinstance(wellness, Exception):
-        wellness = {}
+    garmin, activities, wellness = await _fetch_garmin_data(uid)
 
     garmin_kcal = 0
     if activities:
