@@ -12,6 +12,7 @@ resource "google_secret_manager_secret_iam_member" "backend_access" {
   member    = "serviceAccount:${google_service_account.fuel_backend.email}"
 }
 
+# holden:ignore:HLD_GCP_123 -- auto replication does not support CMEK; user_managed replication would require pinning regions
 resource "google_secret_manager_secret" "anthropic_api_key" {
   secret_id = "anthropic-api-key"
   replication {
@@ -19,6 +20,7 @@ resource "google_secret_manager_secret" "anthropic_api_key" {
   }
 }
 
+# holden:ignore:HLD_GCP_123 -- auto replication does not support CMEK; user_managed replication would require pinning regions
 resource "google_secret_manager_secret" "garmin_api_secret" {
   secret_id = "garmin-api-secret"
   replication {
@@ -26,6 +28,7 @@ resource "google_secret_manager_secret" "garmin_api_secret" {
   }
 }
 
+# holden:ignore:HLD_GCP_123 -- auto replication does not support CMEK; user_managed replication would require pinning regions
 resource "google_secret_manager_secret" "vapid_private_key" {
   secret_id = "vapid-private-key"
   replication {
@@ -33,6 +36,7 @@ resource "google_secret_manager_secret" "vapid_private_key" {
   }
 }
 
+# holden:ignore:HLD_GCP_123 -- auto replication does not support CMEK; user_managed replication would require pinning regions
 resource "google_secret_manager_secret" "internal_secret" {
   secret_id = "fuel-internal-secret"
   replication {
@@ -40,6 +44,7 @@ resource "google_secret_manager_secret" "internal_secret" {
   }
 }
 
+# holden:ignore:HLD_GCP_123 -- auto replication does not support CMEK; user_managed replication would require pinning regions
 resource "google_secret_manager_secret" "allowed_emails" {
   secret_id = "fuel-allowed-emails"
   replication {
@@ -47,6 +52,7 @@ resource "google_secret_manager_secret" "allowed_emails" {
   }
 }
 
+# holden:ignore:HLD_GCP_123 -- auto replication does not support CMEK; user_managed replication would require pinning regions
 resource "google_secret_manager_secret" "admin_uid" {
   secret_id = "fuel-admin-uid"
   replication {

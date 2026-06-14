@@ -1,3 +1,4 @@
+# holden:ignore:HLD_GCP_003 -- access logging not required; personal project bucket, not handling regulated data
 resource "google_storage_bucket" "sqlite" {
   name                        = "${var.project_id}-sqlite"
   location                    = var.region
