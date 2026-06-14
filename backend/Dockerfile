@@ -17,13 +17,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Backend source
 COPY backend/main.py backend/db.py backend/garmin_client.py \
-     backend/litestream.yml backend/start.sh ./
+     backend/litestream.yml ./
 # garmin_mcp.py from repo root (provides _dedup and MCP tools)
 COPY garmin_mcp.py ./
-
-RUN chmod +x start.sh
 
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["/app/start.sh"]
+CMD litestream replicate -exec "uvicorn main:app --host 0.0.0.0 --port ${PORT}"
