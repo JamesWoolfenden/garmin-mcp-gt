@@ -8,20 +8,20 @@ Log food in plain English, get a calorie balance against your activity, and ask 
 
 ## Features
 
-- **Food logging** — describe what you ate in plain English; Claude estimates the calories
+- **Food logging** — describe what you ate in plain English; Claude estimates calories and macros (protein, carbs, fat)
 - **Activity balance** — live calorie in vs. burned, updated from Garmin
-- **Conversational health advisor** — ask "how were my steps today?" or "how did I sleep last night?" and get answers using your real Garmin data
+- **Conversational health advisor** — ask "how were my steps today?", "how did I sleep last night?", or "how much protein have I had today?" and get answers using your real data
 - **Push nudges** — scheduled notifications with time-aware advice (morning vs. evening)
 - **Multi-user** — each user has their own data, secured with Firebase Auth
 
 ## Using the app
 
-The hosted app is at **https://pike-477416.web.app**
+The hosted app is at **https://fuel.wlfdn.dev**
 
 1. Sign in with Google or create an email/password account
 2. Log food in the text box ("had porridge and a coffee")
 3. Connect Garmin to enable activity data and the Ask tab (see below)
-4. Tap **Ask** to chat with Claude about your health data
+4. Tap **Ask** to chat with Claude about your health and nutrition data
 
 ## Connecting Garmin
 
@@ -47,8 +47,14 @@ In the Fuel app, scroll to the bottom of the **Log** tab and tap **Connect Garmi
 
 ### 4. Upload your tokens
 
+**On any platform:**
 ```bash
 garmin-upload-tokens --token "paste-token-here"
+```
+
+**On Windows (PowerShell), using the repo script:**
+```powershell
+.\garmin-upload-tokens.ps1 -UploadToken "paste-token-here"
 ```
 
 That's it. Your Garmin data is now available in the app and the Ask tab will use it.
@@ -84,8 +90,11 @@ Then add to `~/.claude/settings.json` (Claude Code) or your Claude Desktop confi
 |------|-------------|
 | `get_today_stats` | Steps, distance, calories, active minutes, resting HR, body battery |
 | `get_recent_activities` | Last N cycling/running activities with distance, duration, HR, power |
-| `get_activity_detail` | Detailed metrics for one activity: HR/power zones, cadence, left/right power balance, power phase angles, platform centre offset — useful for bike fit analysis |
-| `get_activity_fit` | Downloads the raw FIT file and returns TSS, Intensity Factor, total work (kJ), device FTP, and a per-lap breakdown — data not available via the Garmin API |
+| `get_activity_detail` | Detailed metrics for one activity: HR/power zones, cadence, left/right power balance, power phase angles, platform centre offset |
+| `get_activity_fit` | Downloads the raw FIT file and returns TSS, Intensity Factor, total work (kJ), device FTP, and a per-lap breakdown |
+| `get_bike_fit_analysis` | Aggregate fit metrics across recent rides and surface actionable signals (cadence, L/R imbalance, power phase, platform offset). Pass `since=YYYY-MM-DD` to compare before/after a bike adjustment |
+| `get_ride_fatigue_analysis` | Analyse per-lap FIT data to detect position breakdown under fatigue (PCO drift, cadence drop, power fade) |
+| `compare_dual_recordings` | Compare HR and power between two recordings of the same ride on different devices (e.g. chest-strap vs. optical HR) |
 | `get_sedentary_analysis` | How sedentary a day was — sedentary/light/moderate/active time breakdown |
 | `get_sleep` | Sleep score, stages (deep/REM/light), SpO2, stress |
 | `get_hrv` | Overnight HRV history — key recovery metric |
@@ -103,6 +112,8 @@ Then add to `~/.claude/settings.json` (Claude Code) or your Claude Desktop confi
 - "How did I sleep last night?"
 - "Am I sedentary today?"
 - "Analyse my bike fit from my last 5 rides"
+- "Compare my bike fit before and after the saddle change I made on 2025-03-01"
+- "Did my position break down in the last hour of yesterday's ride?"
 - "How does my HRV trend compare to my training load this week?"
 - "What's my W/kg and how has my weight changed this month?"
 
@@ -113,7 +124,7 @@ Then add to `~/.claude/settings.json` (Claude Code) or your Claude Desktop confi
 - **Database** — SQLite with Litestream replication to GCS (zero managed DB cost)
 - **Garmin tokens** — encrypted at rest with Cloud KMS, per-user in SQLite
 - **Auth** — Firebase Auth (Google Sign-In + email/password)
-- **AI** — Claude API (food parsing, recommendations, conversational tools)
+- **AI** — Claude API (Haiku for food parsing and recommendations; Sonnet for the Ask tab)
 
 ## Self-hosting
 
