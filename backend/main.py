@@ -1091,6 +1091,25 @@ _GARMIN_TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "get_food_log",
+        "description": (
+            "Get the user's food diary entries logged in the Fuel app for a given date. "
+            "Returns each food item with calories and macros (protein, carbs, fat), "
+            "plus daily totals. Use this when the user asks about nutrition, protein intake, "
+            "calorie intake, macros, diet, or what they've eaten."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "description": "Date in YYYY-MM-DD format (default today)",
+                }
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -1424,6 +1443,37 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
             from garmin_mcp import get_courses as _get_courses
 
             return _get_courses(limit=tool_input.get("limit", 20))
+        elif tool_name == "get_food_log":
+            target_date = tool_input.get("date") or date.today().isoformat()
+            entries = get_food_entries(uid, target_date)
+            total_kcal = sum(e["kcal"] for e in entries)
+            total_protein = total_carbs = total_fat = 0
+            items = []
+            for e in entries:
+                m = json.loads(e.get("macros_json") or "{}")
+                total_protein += m.get("protein_g", 0)
+                total_carbs += m.get("carbs_g", 0)
+                total_fat += m.get("fat_g", 0)
+                items.append(
+                    {
+                        "food": e["parsed"],
+                        "kcal": e["kcal"],
+                        "protein_g": m.get("protein_g", 0),
+                        "carbs_g": m.get("carbs_g", 0),
+                        "fat_g": m.get("fat_g", 0),
+                        "logged_at": e["logged_at"],
+                    }
+                )
+            return {
+                "date": target_date,
+                "entries": items,
+                "totals": {
+                    "kcal": total_kcal,
+                    "protein_g": total_protein,
+                    "carbs_g": total_carbs,
+                    "fat_g": total_fat,
+                },
+            }
         else:
             return {"error": f"Unknown tool: {tool_name}"}
 
@@ -1451,9 +1501,11 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
     today = date.today().isoformat()
     system = (
         f"You are a personal health and fitness advisor for a cyclist. "
-        f"Today is {today}. You have access to the user's Garmin data via tools. "
+        f"Today is {today}. You have access to the user's Garmin data and food diary via tools. "
         f"Be concise and practical. Use tools when the user asks about their activity, "
-        f"sleep, heart rate, or fitness data. "
+        f"sleep, heart rate, fitness data, or nutrition. "
+        f"When the user asks about protein, calories, macros, diet, or what they've eaten, "
+        f"always call get_food_log first to retrieve their logged food entries. "
         f"For bike fit analysis, call get_recent_activities to find cycling rides with power data, "
         f"then get_activity_detail on 3-5 of them to check cadence, left/right balance, "
         f"power phase, and platform centre offset across multiple rides."
