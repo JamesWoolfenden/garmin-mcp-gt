@@ -523,6 +523,11 @@ export default function App() {
                 <BalanceBar kcalIn={balance.kcal_in} kcalBurned={balance.kcal_burned} kcalTarget={balance.kcal_target} />
               )}
               <Recommendation text={balance.recommendation} status={balance.status} />
+              {balance.garmin_available === false && balance.status !== "historical" && (
+                <p style={{fontSize:"12px",color:"var(--muted)",textAlign:"center",margin:"4px 0 0"}}>
+                  ⚠ Garmin disconnected — open Settings to reconnect
+                </p>
+              )}
             </div>
           )}
 
