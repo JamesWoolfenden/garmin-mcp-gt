@@ -24,4 +24,4 @@ COPY garmin_mcp.py ./
 ENV PORT=8080
 EXPOSE 8080
 
-CMD litestream replicate -exec "uvicorn main:app --host 0.0.0.0 --port ${PORT}"
+CMD ["/bin/sh", "-c", "litestream restore -if-replica-exists /data/fuel.db; litestream replicate -exec \"uvicorn main:app --host 0.0.0.0 --port $PORT\""]
