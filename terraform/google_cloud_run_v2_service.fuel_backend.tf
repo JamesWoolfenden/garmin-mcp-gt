@@ -1,5 +1,6 @@
 # holden:ignore:HLD_GCP_167 -- public API endpoint; unauthenticated invocations are intentional (Firebase auth enforced in app)
 # holden:ignore:HLD_GCP_127 -- ephemeral disk only; persistent data is CMEK-protected via sqlite_data key (GCS) and garmin_tokens key (app-level KMS)
+# holden:ignore:HLD_GCP_023 -- Firebase ID token auth is enforced at the application layer on every endpoint; allUsers invoker is required for a browser SPA that cannot obtain Google identity tokens
 resource "google_cloud_run_v2_service" "fuel_backend" {
   name     = "fuel-backend"
   location = var.region
