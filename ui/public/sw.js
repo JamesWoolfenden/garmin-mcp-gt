@@ -69,15 +69,28 @@ self.addEventListener("fetch", (e) => {
 });
 
 self.addEventListener("push", (e) => {
-  if (!e.data) return;
-  const data = e.data.json();
+  let title = "Fuel";
+  let body = "Check your nutrition and activity balance.";
+  let url = "/";
+
+  if (e.data) {
+    try {
+      const data = e.data.json();
+      title = data.title || title;
+      body = data.body || body;
+      url = data.url || url;
+    } catch {
+      body = e.data.text() || body;
+    }
+  }
+
   e.waitUntil(
-    self.registration.showNotification(data.title || "Fuel", {
-      body: data.body,
+    self.registration.showNotification(title, {
+      body,
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
-      tag: data.tag || "fuel-nudge",
-      data: { url: data.url || "/" },
+      tag: "fuel-nudge",
+      data: { url },
     })
   );
 });
