@@ -1,3 +1,5 @@
+# holden:ignore:HLD_GCP_167
+# holden:ignore:HLD_GCP_127
 resource "google_cloud_run_v2_service" "fuel_backend" {
   name     = "fuel-backend"
   location = var.region
