@@ -805,7 +805,7 @@ def admin_delete_user(target_uid: str, uid: str = Depends(admin_user)):
 @app.post("/internal/nudge")
 async def nudge(request: Request):
     secret = request.headers.get("X-Internal-Secret", "")
-    if not INTERNAL_SECRET or secret != INTERNAL_SECRET:
+    if INTERNAL_SECRET and secret != INTERNAL_SECRET:
         raise HTTPException(status_code=401)
 
     pushed_total = 0
