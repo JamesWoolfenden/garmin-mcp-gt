@@ -9,16 +9,10 @@ resource "google_service_account" "terraform" {
   description  = "Service account used by GitHub Actions via Workload Identity Federation"
 }
 
-# Bootstrap: bind fuel_terraform role to the terraform SA manually —
-# Terraform cannot manage its own executor's permissions.
-#
-#   gcloud projects add-iam-policy-binding pike-477416 \
-#     --member="serviceAccount:github-actions-terraform@pike-477416.iam.gserviceaccount.com" \
-#     --role="projects/pike-477416/roles/fuel_terraform"
-#
-#   gcloud storage buckets add-iam-policy-binding gs://terraform-pike-bucket-tfstate \
-#     --member="serviceAccount:github-actions-terraform@pike-477416.iam.gserviceaccount.com" \
-#     --role="projects/pike-477416/roles/fuel_terraform"
+# The fuel_terraform role and its bindings to this SA are defined in ../iam
+# (a separate Terraform state, applied by hand — never by this SA, never by
+# CI). See iam/README.md for why. Previously this was raw, undocumented
+# gcloud commands; that module replaces them with reviewable code.
 
 resource "google_service_account_iam_member" "wif_terraform" {
   service_account_id = google_service_account.terraform.name
