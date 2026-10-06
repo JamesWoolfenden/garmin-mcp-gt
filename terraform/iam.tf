@@ -36,6 +36,7 @@ resource "google_cloud_run_v2_service_iam_member" "scheduler_invoker" {
   member   = "serviceAccount:${local.scheduler_sa}"
 }
 
+# holden:ignore:HLD_GCP_023: -- public invoker is required for the Garmin OAuth callback to work; the callback is a one-time operation and does not expose any sensitive data
 resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
   project  = var.project_id
   location = var.region

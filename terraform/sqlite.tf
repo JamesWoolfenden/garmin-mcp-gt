@@ -14,9 +14,21 @@ resource "google_storage_bucket" "sqlite" {
     default_kms_key_name = google_kms_crypto_key.sqlite_data.id
   }
 
-  depends_on = [google_kms_crypto_key_iam_member.gcs_sqlite_encrypter]
+  lifecycle_rule {
+    condition {
+      age = 30
+    }
 
-  #checkov:skip=CKV_GCP_62: Access logging not required for personal project state bucket
+    action {
+      type = "Delete"
+    }
+  }
+
+  soft_delete_policy {
+    retention_duration_seconds = 604800
+  }
+
+  depends_on = [google_kms_crypto_key_iam_member.gcs_sqlite_encrypter]
 }
 
 resource "google_storage_bucket_iam_member" "sqlite_backend" {

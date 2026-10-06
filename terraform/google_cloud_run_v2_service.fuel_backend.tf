@@ -115,10 +115,30 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
 
   depends_on = [
     google_project_service.apis,
-    google_secret_manager_secret.anthropic_api_key,
-    google_secret_manager_secret.garmin_api_secret,
-    google_secret_manager_secret.vapid_private_key,
-    google_secret_manager_secret.internal_secret,
     time_sleep.iam_propagation,
   ]
+}
+
+resource "google_monitoring_uptime_check_config" "fuel_backend" {
+  display_name = "fuel-backend uptime check"
+  timeout      = "10s"
+  period       = "60s"
+
+  http_check {
+    path           = "/"
+    port           = 443
+    request_method = "GET"
+    use_ssl        = true
+    validate_ssl   = true
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.project_id
+      host       = trimprefix(google_cloud_run_v2_service.fuel_backend.uri, "https://")
+    }
+  }
+
+  selected_regions = ["USA"]
 }

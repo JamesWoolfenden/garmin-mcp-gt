@@ -1,7 +1,7 @@
 locals {
-  deploy_sa    = "github-actions-deploy@${var.project_id}.iam.gserviceaccount.com"
-  terraform_sa = "github-actions-terraform@${var.project_id}.iam.gserviceaccount.com"
-  scheduler_sa = "fuel-scheduler@${var.project_id}.iam.gserviceaccount.com"
+  deploy_sa    = google_service_account.deploy.email
+  terraform_sa = google_service_account.terraform.email
+  scheduler_sa = google_service_account.scheduler.email
   nudge_hours  = [8, 13, 15, 20]
 
   backend_secrets = {
