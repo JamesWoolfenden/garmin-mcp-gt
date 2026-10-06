@@ -114,6 +114,18 @@ function Recommendation({ text, status }) {
   );
 }
 
+function ReadinessBadge({ readiness }) {
+  if (!readiness) return null;
+  const dotClass = readiness.label.toLowerCase();
+  return (
+    <div className="readiness" title={readiness.driver}>
+      <span className={`readiness-dot ${dotClass}`} />
+      <span className="readiness-label">{readiness.label}</span>
+      <span className="readiness-score">readiness · {readiness.score}/100</span>
+    </div>
+  );
+}
+
 function PushToggle({ pushState, onSubscribe, onUnsubscribe }) {
   if (pushState === "unsupported") return null;
   if (pushState === "subscribed")
@@ -528,6 +540,7 @@ export default function App() {
                 <BalanceBar kcalIn={balance.kcal_in} kcalBurned={balance.kcal_burned} kcalTarget={balance.kcal_target} />
               )}
               <Recommendation text={balance.recommendation} status={balance.status} />
+              <ReadinessBadge readiness={balance.readiness} />
               {balance.garmin_available === false && balance.status !== "historical" && (
                 <p style={{fontSize:"12px",color:"var(--muted)",textAlign:"center",margin:"4px 0 0"}}>
                   ⚠ Garmin disconnected — open Settings to reconnect
