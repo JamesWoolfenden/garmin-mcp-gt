@@ -1,0 +1,48 @@
+{
+  "scan_date": "2026-10-06T00:00:00Z",
+  "scan_path": "terraform",
+  "findings": [
+    {
+      "id": "HOLDEN_BP_001",
+      "status": "fixed",
+      "first_seen": "2026-10-06",
+      "last_seen": "2026-10-06",
+      "principle": "maintainability",
+      "severity": "LOW",
+      "confidence": "high",
+      "title": "Service-account emails rebuilt via string interpolation instead of referencing the resource",
+      "file": "terraform/locals.tf",
+      "line": 2,
+      "resource": "local.deploy_sa, local.terraform_sa, local.scheduler_sa",
+      "explanation": "deploy_sa, terraform_sa and scheduler_sa were built as \"<account_id>@${var.project_id}.iam.gserviceaccount.com\" even though google_service_account.deploy, .terraform and .scheduler all exist in this root module. Duplicating the value broke the implicit Terraform dependency edge from iam.tf's IAM-member resources back to the service-account resources, so nothing in the graph guaranteed the SA existed before the binding was attempted (e.g. on a fresh/recreated environment).",
+      "remediation": "Reference the resource attribute directly: deploy_sa = google_service_account.deploy.email, etc.",
+      "fixable": true,
+      "fix": "deploy_sa    = google_service_account.deploy.email\n  terraform_sa = google_service_account.terraform.email\n  scheduler_sa = google_service_account.scheduler.email"
+    },
+    {
+      "id": "HOLDEN_BP_002",
+      "status": "open",
+      "first_seen": "2026-10-06",
+      "last_seen": "2026-10-06",
+      "principle": "maintainability",
+      "severity": "INFO",
+      "confidence": "medium",
+      "title": "Six near-identical secret resources could be a single for_each",
+      "file": "terraform/secrets.tf",
+      "line": 16,
+      "resource": "google_secret_manager_secret.anthropic_api_key, .garmin_api_secret, .vapid_private_key, .internal_secret, .allowed_emails, .admin_uid",
+      "explanation": "The six google_secret_manager_secret resources differ only by secret_id and would normally collapse into one for_each block. Deferred: imports.tf references google_secret_manager_secret.allowed_emails and .admin_uid by their current addresses, so collapsing them would change resource addresses and require moved blocks plus careful state verification. User decided this isn't worth the risk right now.",
+      "remediation": "If ever revisited, convert to for_each over a map of secret_id values and add moved blocks for every renamed address before applying.",
+      "fixable": false
+    }
+  ],
+  "suggested_policies": [],
+  "deterministic_findings_summary": {
+    "source": "holden scan terraform --category best-practices --format ai-context --show-unknown",
+    "count": 7,
+    "unresolved_reviewed": 1,
+    "unresolved_resolved_to_finding": 0,
+    "unresolved_confirmed_safe": 1,
+    "unresolved_still_unresolvable": 0
+  }
+}

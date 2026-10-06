@@ -6,6 +6,7 @@
 resource "google_service_account" "terraform" {
   account_id   = "github-actions-terraform"
   display_name = "GitHub Actions Terraform"
+  description  = "Service account used by GitHub Actions via Workload Identity Federation"
 }
 
 # Bootstrap: bind fuel_terraform role to the terraform SA manually —

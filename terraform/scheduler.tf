@@ -25,7 +25,7 @@ resource "google_cloud_scheduler_job" "nudge" {
     max_doublings        = 5
     max_retry_duration   = "0s"
     min_backoff_duration = "5s"
-    retry_count          = 0
+    retry_count          = 1
   }
 
   depends_on = [google_cloud_run_v2_service_iam_member.scheduler_invoker]
