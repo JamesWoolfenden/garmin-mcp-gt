@@ -147,12 +147,70 @@ def _wind_dir(deg: float | None) -> str | None:
     return dirs[round(deg / 45) % 8]
 
 
+def _clothing_advice(
+    feels_like_c: float | None,
+    wind_mph: float | None,
+    precipitation_mm: float | None,
+) -> list[str]:
+    """Rule-based cycling kit advice for a given set of conditions.
+
+    Thresholds are feels-like (wind-chill-adjusted) temperature, not raw
+    temperature, since that's what actually determines how cold a ride feels.
+    """
+    advice: list[str] = []
+
+    if feels_like_c is not None:
+        if feels_like_c < 0:
+            advice.append(
+                "Below freezing — full winter kit: thermal base layer, "
+                "winter jacket, thermal tights, lobster mitts or thick gloves, "
+                "neck warmer, toe covers."
+            )
+        elif feels_like_c < 5:
+            advice.append(
+                "Cold — thermal tights, long-sleeve thermal jersey + jacket, "
+                "full-finger winter gloves, buff or neck warmer, shoe covers."
+            )
+        elif feels_like_c < 10:
+            advice.append(
+                "Chilly — leg/knee warmers, long-sleeve jersey + light jacket, "
+                "full-finger gloves."
+            )
+        elif feels_like_c < 15:
+            advice.append(
+                "Cool — arm/leg warmers or a light long-sleeve layer over a jersey."
+            )
+        elif feels_like_c < 20:
+            advice.append(
+                "Mild — shorts and a light long-sleeve or short-sleeve jersey."
+            )
+        else:
+            advice.append("Warm — shorts, short-sleeve jersey.")
+
+    if wind_mph is not None and wind_mph >= 25:
+        advice.append(
+            "Very windy — exposed routes will be hard going; consider an "
+            "indoor session or a sheltered route instead."
+        )
+    elif wind_mph is not None and wind_mph >= 15:
+        advice.append("Windy — a windproof gilet or jacket is worth packing.")
+
+    if precipitation_mm is not None and precipitation_mm > 0:
+        advice.append(
+            "Wet roads expected — mudguards, a waterproof layer, and "
+            "lights for reduced visibility."
+        )
+
+    return advice
+
+
 @mcp.tool()
 def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, Any]:
     """Get current weather and cycling forecast using OpenMeteo (free, no API key needed).
 
     Returns current conditions and a daily forecast with cycling-relevant metrics:
-    temperature, wind speed/direction, precipitation, and a 'rideable' flag.
+    temperature, feels-like temperature, wind speed/direction, precipitation,
+    a 'rideable' flag, and rule-based clothing/kit advice for the conditions.
 
     Args:
         latitude: Location latitude (e.g. 51.45 for Reading, UK).
@@ -183,6 +241,8 @@ def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, A
                 [
                     "temperature_2m_max",
                     "temperature_2m_min",
+                    "apparent_temperature_max",
+                    "apparent_temperature_min",
                     "precipitation_sum",
                     "wind_speed_10m_max",
                     "wind_direction_10m_dominant",
@@ -202,22 +262,33 @@ def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, A
     current = data.get("current", {})
     daily = data.get("daily", {})
 
-    forecast = [
-        {
-            "date": d,
-            "condition": _weather_code_desc(daily["weather_code"][i]),
-            "temp_max_c": daily["temperature_2m_max"][i],
-            "temp_min_c": daily["temperature_2m_min"][i],
-            "precipitation_mm": daily["precipitation_sum"][i],
-            "max_wind_mph": daily["wind_speed_10m_max"][i],
-            "wind_direction": _wind_dir(daily["wind_direction_10m_dominant"][i]),
-            "rideable": (
-                daily["precipitation_sum"][i] < 2
-                and daily["wind_speed_10m_max"][i] < 25
-            ),
-        }
-        for i, d in enumerate(daily.get("time", []))
-    ]
+    forecast = []
+    for i, d in enumerate(daily.get("time", [])):
+        feels_like_max = daily["apparent_temperature_max"][i]
+        feels_like_min = daily["apparent_temperature_min"][i]
+        # Average of the day's feels-like range as a stand-in for "typical
+        # daytime feel" — the daily max/min alone skew toward midday peak or
+        # overnight low, neither of which represents a typical ride window.
+        feels_like_avg = round((feels_like_max + feels_like_min) / 2, 1)
+        wind_mph = daily["wind_speed_10m_max"][i]
+        precip_mm = daily["precipitation_sum"][i]
+        forecast.append(
+            {
+                "date": d,
+                "condition": _weather_code_desc(daily["weather_code"][i]),
+                "temp_max_c": daily["temperature_2m_max"][i],
+                "temp_min_c": daily["temperature_2m_min"][i],
+                "feels_like_max_c": feels_like_max,
+                "feels_like_min_c": feels_like_min,
+                "precipitation_mm": precip_mm,
+                "max_wind_mph": wind_mph,
+                "wind_direction": _wind_dir(daily["wind_direction_10m_dominant"][i]),
+                "rideable": precip_mm < 2 and wind_mph < 25,
+                "clothing_advice": _clothing_advice(
+                    feels_like_avg, wind_mph, precip_mm
+                ),
+            }
+        )
 
     return {
         "current": {
@@ -228,6 +299,11 @@ def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, A
             "precipitation_mm": current.get("precipitation"),
             "wind_mph": current.get("wind_speed_10m"),
             "wind_direction": _wind_dir(current.get("wind_direction_10m")),
+            "clothing_advice": _clothing_advice(
+                current.get("apparent_temperature"),
+                current.get("wind_speed_10m"),
+                current.get("precipitation"),
+            ),
         },
         "forecast": forecast,
     }
