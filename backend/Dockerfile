@@ -1,8 +1,14 @@
 FROM python:3.12-slim@sha256:090ba77e2958f6af52a5341f788b50b032dd4ca28377d2893dcf1ecbdfdfe203
 
-# Install Litestream
+# Install Litestream. wget/ca-certificates are intentionally unpinned: the
+# base image above is pinned by digest (the durable reproducibility anchor),
+# but an exact apt version pin here goes stale as soon as Debian's trixie
+# repo rolls forward past it — apt has no fallback to an older version once
+# that happens, so the build just breaks outright. wget is removed again in
+# this same layer anyway (build-time only), and a fresher ca-certificates is
+# strictly better for TLS trust than freezing an old one.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      wget=1.21.4-1+deb12u1 ca-certificates=20230311+deb12u1 && \
+      wget ca-certificates && \
     wget -qO /tmp/litestream.tar.gz \
       https://github.com/benbjohnson/litestream/releases/download/v0.3.13/litestream-v0.3.13-linux-amd64.tar.gz && \
     tar -xzf /tmp/litestream.tar.gz -C /usr/local/bin/ && \
