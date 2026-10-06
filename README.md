@@ -103,7 +103,7 @@ Then add to `~/.claude/settings.json` (Claude Code) or your Claude Desktop confi
 | `get_vo2max` | VO2max and lactate threshold history |
 | `get_weight` | Weigh-in history: weight, body fat %, muscle mass |
 | `get_weight_trend` | Weekly rolling weight averages to track fat loss without hydration noise |
-| `get_weather` | Current conditions and cycling forecast via OpenMeteo (free, no API key) — includes rideable flag per day |
+| `get_weather` | Current conditions and cycling forecast via OpenMeteo (free, no API key) — includes a rideable flag and rule-based clothing/kit advice per day |
 | `get_activity_weather` | Weather recorded by Garmin during a specific past activity |
 | `get_courses` | Saved courses from Garmin Connect with distance and elevation |
 

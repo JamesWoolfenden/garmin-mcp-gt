@@ -13,11 +13,19 @@ for mod in [
     "garminconnect",
     "mcp",
     "mcp.server",
-    "mcp.server.fastmcp",
     "firebase_admin",
     "firebase_admin.auth",
 ]:
     sys.modules.setdefault(mod, MagicMock())
+
+# mcp.server.fastmcp needs its own mock: a bare MagicMock's .tool() would
+# return a mock rather than the original function, so every @mcp.tool()
+# function in garmin_mcp.py would become an opaque mock in tests instead of
+# the real, callable function — silently hiding bugs in any of them, the
+# same way it hid garmin_mcp.client()'s token-dir bug before that was found.
+_fastmcp_mock = MagicMock()
+_fastmcp_mock.FastMCP.return_value.tool.return_value.side_effect = lambda fn: fn
+sys.modules.setdefault("mcp.server.fastmcp", _fastmcp_mock)
 
 # Use in-memory SQLite for tests
 os.environ["DB_PATH"] = ":memory:"
