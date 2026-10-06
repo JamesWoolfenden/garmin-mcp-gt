@@ -326,9 +326,14 @@ def _garmin_wellness(uid: str) -> dict[str, Any]:
             # Latest HRV
             try:
                 hrv = g.get_hrv_data(today)
-                hrv_val = (hrv or {}).get("hrvSummary", {}).get("lastNight")
+                summary = (hrv or {}).get("hrvSummary", {})
+                hrv_val = summary.get("lastNightAvg")
                 if hrv_val:
                     result["hrv_last_night"] = hrv_val
+                    result["hrv_status"] = summary.get("status")
+                    baseline = summary.get("baseline", {})
+                    result["hrv_baseline_low"] = baseline.get("balancedLow")
+                    result["hrv_baseline_high"] = baseline.get("balancedUpper")
             except Exception:
                 pass
 
@@ -359,6 +364,77 @@ def _garmin_wellness(uid: str) -> dict[str, Any]:
     except Exception:
         pass
     return result
+
+
+# Garmin's documented HRV Status values. Used ahead of the baseline-range
+# fallback below since it's Garmin's own interpretation of the reading
+# (accounts for more than a simple range check), when available.
+_HRV_STATUS_SCORES = {
+    "BALANCED": 80.0,
+    "UNBALANCED": 45.0,
+    "LOW": 35.0,
+}
+
+
+def _compute_readiness(wellness: dict[str, Any]) -> dict[str, Any] | None:
+    """Combine sleep, HRV, and body battery into a single daily readiness score.
+
+    Sleep and HRV are weighted higher than body battery: Garmin's body
+    battery algorithm already factors in sleep and HRV itself, so weighting
+    all three equally would double-count the same underlying signal.
+
+    Returns None when there isn't enough wellness data to say anything
+    meaningful (e.g. Garmin not connected, or all per-metric fetches failed).
+    """
+    components: dict[str, float] = {}
+
+    sleep_score = wellness.get("sleep_score")
+    if sleep_score is not None:
+        components["sleep"] = float(sleep_score)
+
+    hrv_status = (wellness.get("hrv_status") or "").upper()
+    hrv_val = wellness.get("hrv_last_night")
+    baseline_low = wellness.get("hrv_baseline_low")
+    baseline_high = wellness.get("hrv_baseline_high")
+    if hrv_status in _HRV_STATUS_SCORES:
+        components["hrv"] = _HRV_STATUS_SCORES[hrv_status]
+    elif hrv_val is not None and baseline_low is not None and baseline_high is not None:
+        if hrv_val < baseline_low:
+            components["hrv"] = 40.0
+        elif hrv_val > baseline_high:
+            components["hrv"] = 90.0
+        else:
+            components["hrv"] = 75.0
+
+    body_battery = wellness.get("body_battery_charged")
+    if body_battery is not None:
+        components["body_battery"] = float(body_battery)
+
+    if not components:
+        return None
+
+    weights = {"sleep": 0.4, "hrv": 0.4, "body_battery": 0.2}
+    total_weight = sum(weights[k] for k in components)
+    score = round(sum(components[k] * weights[k] for k in components) / total_weight)
+
+    if score >= 80:
+        label = "Fresh"
+    elif score >= 60:
+        label = "Normal"
+    elif score >= 40:
+        label = "Tired"
+    else:
+        label = "Fatigued"
+
+    driver_key = min(components, key=components.get)
+    driver_names = {"sleep": "sleep", "hrv": "HRV", "body_battery": "body battery"}
+
+    return {
+        "score": score,
+        "label": label,
+        "driver": f"Lowest signal: {driver_names[driver_key]} ({round(components[driver_key])})",
+        "components": {k: round(v) for k, v in components.items()},
+    }
 
 
 def claude_recommend(
@@ -691,6 +767,7 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
             "activity_today": manual,
             "manual_activities": manual,
             "garmin_available": False,
+            "readiness": None,
         }
 
     garmin, activities, wellness = await _fetch_garmin_data(uid)
@@ -709,6 +786,8 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
         wellness["body_battery_charged"] = (
             bb.get("current") if bb.get("current") is not None else bb.get("charged")
         )
+
+    readiness = _compute_readiness(wellness or {})
 
     if garmin and not activities:
         activities = [
@@ -755,6 +834,7 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
         "activity_today": all_activities,
         "manual_activities": manual,
         "garmin_available": garmin is not None,
+        "readiness": readiness,
     }
 
 
