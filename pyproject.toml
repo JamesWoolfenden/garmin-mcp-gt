@@ -8,20 +8,20 @@ version = "0.1.7"
 description = "Garmin Connect MCP server — exposes health and activity data as tools for Claude"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 keywords = ["garmin", "mcp", "claude", "health", "fitness", "cycling"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Internet",
 ]
 dependencies = [
-    "garminconnect>=0.3.2,<0.4",
+    # >=0.3.5: fixes a high-severity advisory where the OAuth token store
+    # (refresh token) was written world-readable under the default umask.
+    "garminconnect>=0.3.5,<0.4",
     # mcp 2.0 renamed FastMCP -> MCPServer and changed its import path
     # (mcp.server.fastmcp no longer exists); garmin_mcp.py is written against
     # the 1.x API. Pin below 2 until that migration happens deliberately.
