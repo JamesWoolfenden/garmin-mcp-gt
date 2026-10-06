@@ -22,12 +22,28 @@ classifiers = [
 ]
 dependencies = [
     "garminconnect>=0.3.2,<0.4",
-    "mcp>=1.0.0",
+    # mcp 2.0 renamed FastMCP -> MCPServer and changed its import path
+    # (mcp.server.fastmcp no longer exists); garmin_mcp.py is written against
+    # the 1.x API. Pin below 2 until that migration happens deliberately.
+    "mcp>=1.0.0,<2",
     "garmin-fit-sdk>=21.0.0",
 ]
 
 [project.optional-dependencies]
-dev = ["ruff", "pre-commit"]
+dev = ["ruff==0.16.10", "pre-commit"]
+
+[tool.ruff.lint]
+# Explicit, pinned rule selection. Ruff's actual default rule set has grown
+# across releases — flake8-datetimez (DTZ), flake8-bandit (S),
+# flake8-blind-except (BLE), flynt (FLY), and refurb (FURB) checks all
+# started firing here with zero code change, since "ruff" above was
+# previously unpinned and uv.lock wasn't committed, so CI always installed
+# whatever was latest on PyPI. main's CI was silently broken from sometime
+# after 2026-06-14 until this was found on 2026-10-06. Pin to classic
+# pyflakes + pycodestyle, which is what this codebase's naive dates and
+# intentional broad excepts (fail one Garmin sub-fetch without breaking the
+# whole response) were actually written against.
+select = ["E4", "E7", "E9", "F"]
 
 [project.scripts]
 garmin-mcp = "garmin_mcp:main"
