@@ -19,7 +19,7 @@ import json
 import os
 import time
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import firebase_admin
@@ -190,6 +190,84 @@ def _garmin_activities(uid: str) -> list[dict] | None:
         return None
 
 
+def _compute_sleep(g, offset_days: int = 0) -> dict[str, Any]:
+    """Sleep data for a given night, using the caller's already-open Garmin session.
+
+    Mirrors garmin_mcp.get_sleep's output shape, but takes the per-user client
+    directly instead of going through that module's global singleton — which
+    authenticates from a local token dir this container never populates.
+    """
+    offset_days = max(0, min(offset_days, 365))
+    d = (date.today() - timedelta(days=offset_days)).isoformat()
+    sleep = g.get_sleep_data(d)
+    daily = sleep.get("dailySleepDTO", {})
+    return {
+        "date": d,
+        "sleep_score": daily.get("sleepScores", {}).get("overall", {}).get("value"),
+        "total_sleep_h": round(daily.get("sleepTimeSeconds", 0) / 3600, 1),
+        "deep_min": daily.get("deepSleepSeconds", 0) // 60,
+        "rem_min": daily.get("remSleepSeconds", 0) // 60,
+        "light_min": daily.get("lightSleepSeconds", 0) // 60,
+        "awake_min": daily.get("awakeSleepSeconds", 0) // 60,
+        "avg_spo2_pct": daily.get("averageSpO2Value"),
+        "avg_resting_hr_bpm": daily.get("averageRestingHeartRate"),
+        "avg_stress": daily.get("averageStressLevel"),
+    }
+
+
+def _compute_weight_trend(g, weeks: int = 12) -> list[dict[str, Any]]:
+    """Weekly weight/body-fat/muscle-mass averages, using the caller's already-open
+    Garmin session (see _compute_sleep for why this can't go through garmin_mcp's
+    global client())."""
+    weeks = max(1, min(weeks, 52))
+    today = date.today()
+    start = (today - timedelta(days=weeks * 7 + 7)).isoformat()
+    data = g.get_weigh_ins(start, today.isoformat())
+    by_date: dict[str, dict] = {}
+    for s in data.get("dailyWeightSummaries") or []:
+        w = s.get("latestWeight", {})
+        weight_g = w.get("weight")
+        if weight_g:
+            by_date[s["summaryDate"]] = {
+                "weight_kg": weight_g / 1000,
+                "body_fat_pct": w.get("bodyFat"),
+                "muscle_mass_kg": w.get("muscleMass") / 1000
+                if w.get("muscleMass")
+                else None,
+            }
+    results = []
+    for wk in range(weeks - 1, -1, -1):
+        week_end = today - timedelta(days=wk * 7)
+        week_start = week_end - timedelta(days=6)
+        readings = [
+            by_date[str(week_start + timedelta(days=dd))]
+            for dd in range(7)
+            if str(week_start + timedelta(days=dd)) in by_date
+        ]
+        if not readings:
+            continue
+        weights = [r["weight_kg"] for r in readings]
+        fats = [r["body_fat_pct"] for r in readings if r["body_fat_pct"]]
+        muscles = [r["muscle_mass_kg"] for r in readings if r["muscle_mass_kg"]]
+        results.append(
+            {
+                "week_start": week_start.isoformat(),
+                "week_end": week_end.isoformat(),
+                "readings": len(readings),
+                "avg_weight_kg": round(sum(weights) / len(weights), 2),
+                "avg_body_fat_pct": round(sum(fats) / len(fats), 1) if fats else None,
+                "avg_muscle_mass_kg": round(sum(muscles) / len(muscles), 2)
+                if muscles
+                else None,
+            }
+        )
+    for i in range(1, len(results)):
+        results[i]["change_from_prev_week_kg"] = round(
+            results[i]["avg_weight_kg"] - results[i - 1]["avg_weight_kg"], 2
+        )
+    return results
+
+
 async def fetch_garmin(uid: str) -> dict[str, Any] | None:
     return await run_in_threadpool(_garmin_today, uid)
 
@@ -230,8 +308,6 @@ def _garmin_wellness(uid: str) -> dict[str, Any]:
     result: dict[str, Any] = {}
     try:
         with GarminSession(uid) as g:
-            import garmin_mcp as gm
-
             today = date.today().isoformat()
 
             # Last night's sleep
@@ -256,13 +332,9 @@ def _garmin_wellness(uid: str) -> dict[str, Any]:
             except Exception:
                 pass
 
-            # Weight trend (last 7 days)
+            # Weight trend (this week vs last week)
             try:
-                trend = (
-                    gm.get_weight_trend.__wrapped__()
-                    if hasattr(gm.get_weight_trend, "__wrapped__")
-                    else None
-                )
+                trend = _compute_weight_trend(g, weeks=2)
                 if trend and len(trend) >= 2:
                     delta = trend[-1].get("avg_weight_kg", 0) - trend[0].get(
                         "avg_weight_kg", 0
@@ -1181,11 +1253,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
             data = g.get_heart_rates(d)
             return gm._analyse_heart_rates(data, d)
         elif tool_name == "get_sleep":
-            return (
-                gm.get_sleep.__wrapped__(offset)
-                if hasattr(gm.get_sleep, "__wrapped__")
-                else {"note": "sleep data"}
-            )
+            return _compute_sleep(g, offset)
         elif tool_name == "get_hrv":
             hrv_data = g.get_hrv_data(d_today)
             return hrv_data or {"error": "No HRV data"}
@@ -1248,54 +1316,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
             return results
         elif tool_name == "get_weight_trend":
             weeks = max(1, min(tool_input.get("weeks", 12), 52))
-            start = (date.today() - timedelta(days=weeks * 7 + 7)).isoformat()
-            data = g.get_weigh_ins(start, d_today)
-            by_date: dict[str, dict] = {}
-            for s in data.get("dailyWeightSummaries") or []:
-                w = s.get("latestWeight", {})
-                weight_g = w.get("weight")
-                if weight_g:
-                    by_date[s["summaryDate"]] = {
-                        "weight_kg": weight_g / 1000,
-                        "body_fat_pct": w.get("bodyFat"),
-                        "muscle_mass_kg": w.get("muscleMass") / 1000
-                        if w.get("muscleMass")
-                        else None,
-                    }
-            results = []
-            today_date = date.today()
-            for wk in range(weeks - 1, -1, -1):
-                week_end = today_date - timedelta(days=wk * 7)
-                week_start = week_end - timedelta(days=6)
-                readings = [
-                    by_date[str(week_start + timedelta(days=dd))]
-                    for dd in range(7)
-                    if str(week_start + timedelta(days=dd)) in by_date
-                ]
-                if not readings:
-                    continue
-                weights = [r["weight_kg"] for r in readings]
-                fats = [r["body_fat_pct"] for r in readings if r["body_fat_pct"]]
-                muscles = [r["muscle_mass_kg"] for r in readings if r["muscle_mass_kg"]]
-                results.append(
-                    {
-                        "week_start": week_start.isoformat(),
-                        "week_end": week_end.isoformat(),
-                        "readings": len(readings),
-                        "avg_weight_kg": round(sum(weights) / len(weights), 2),
-                        "avg_body_fat_pct": round(sum(fats) / len(fats), 1)
-                        if fats
-                        else None,
-                        "avg_muscle_mass_kg": round(sum(muscles) / len(muscles), 2)
-                        if muscles
-                        else None,
-                    }
-                )
-            for i in range(1, len(results)):
-                results[i]["change_from_prev_week_kg"] = round(
-                    results[i]["avg_weight_kg"] - results[i - 1]["avg_weight_kg"], 2
-                )
-            return results
+            return _compute_weight_trend(g, weeks)
         elif tool_name == "get_cycling_ftp":
             ftp_data = g.get_cycling_ftp()
             ftp = None
