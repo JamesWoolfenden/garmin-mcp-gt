@@ -995,6 +995,77 @@ def _current_hour_label(tz_name: str | None) -> str:
     return datetime.now(tz).strftime("%H:00")
 
 
+def _is_weekly_digest_time(tz_name: str | None, nudge_times: list[str]) -> bool:
+    """True once a week, on Sunday, at this user's latest configured nudge
+    time — so a user with several nudge_times still gets exactly one digest
+    rather than one per Sunday slot."""
+    if not nudge_times:
+        return False
+    try:
+        tz = ZoneInfo(tz_name or "Europe/London")
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("Europe/London")
+    now = datetime.now(tz)
+    if now.weekday() != 6:  # Monday=0 .. Sunday=6
+        return False
+    return now.strftime("%H:00") == max(nudge_times)
+
+
+def _compute_weekly_summary(uid: str) -> dict[str, Any] | None:
+    """Aggregate the last 7 days of activity/food for the weekly digest.
+    Fails silently (returns None) if Garmin is unavailable — the digest is
+    skipped for that user rather than sent with garbage data."""
+    try:
+        today = date.today()
+        days = [(today - timedelta(days=i)).isoformat() for i in range(7)]
+
+        kcal_in_total = 0
+        for d in days:
+            kcal_in_total += _aggregate_entries(get_food_entries(uid, d))["kcal_in"]
+            kcal_in_total += sum(a["kcal"] for a in get_manual_activities(uid, d))
+
+        with GarminSession(uid) as g:
+            from garmin_mcp import _dedup
+
+            cutoff = days[-1]
+            raw = g.get_activities(0, 50)
+            week_acts = [
+                a for a in _dedup(raw) if a.get("startTimeLocal", "")[:10] >= cutoff
+            ]
+            distance_km = round(sum(a.get("distance", 0) for a in week_acts) / 1000, 1)
+            activity_kcal = sum(a.get("calories") or 0 for a in week_acts)
+
+            trend = _compute_weight_trend(g, weeks=2)
+
+        result: dict[str, Any] = {
+            "distance_km": distance_km,
+            "activity_kcal": activity_kcal,
+            "kcal_in_total": kcal_in_total,
+            "avg_net_kcal": round((kcal_in_total - activity_kcal) / 7),
+            "num_activities": len(week_acts),
+        }
+        if trend and len(trend) >= 2:
+            result["weight_change_kg"] = trend[-1].get("change_from_prev_week_kg")
+            result["weight_kg"] = trend[-1].get("avg_weight_kg")
+        return result
+    except Exception as e:
+        logger.warning(f"Weekly digest fetch failed for {uid}: {e}")
+        return None
+
+
+def _format_weekly_digest(summary: dict[str, Any]) -> tuple[str, str]:
+    title = f"Fuel · your week · {summary['distance_km']}km"
+    parts = [
+        f"{summary['num_activities']} activities, {summary['distance_km']}km, "
+        f"{summary['activity_kcal']} kcal burned."
+    ]
+    parts.append(f"Avg net balance: {summary['avg_net_kcal']} kcal/day.")
+    if summary.get("weight_change_kg") is not None:
+        direction = "up" if summary["weight_change_kg"] > 0 else "down"
+        parts.append(f"Weight {direction} {abs(summary['weight_change_kg'])}kg this week.")
+    return title, " ".join(parts)
+
+
 @app.post("/internal/nudge")
 async def nudge(request: Request):
     secret = request.headers.get("X-Internal-Secret", "")
@@ -1004,17 +1075,23 @@ async def nudge(request: Request):
     pushed_total = 0
     for uid in get_all_subscribed_users():
         profile = get_profile(uid)
-        if _current_hour_label(profile.get("timezone")) not in (
-            profile.get("nudge_times") or []
-        ):
+        nudge_times = profile.get("nudge_times") or []
+        if _current_hour_label(profile.get("timezone")) not in nudge_times:
             continue
 
-        bal = await _compute_balance(uid)
-        kcal_in = round(bal["kcal_in"])
-        kcal_burned = round(bal["kcal_burned"])
-        net = kcal_in - kcal_burned
-        title = f"Fuel · {kcal_in} in · {kcal_burned} burned · {net} net"
-        body = bal["recommendation"] or f"{kcal_in} kcal consumed today."
+        if _is_weekly_digest_time(profile.get("timezone"), nudge_times):
+            summary = await run_in_threadpool(_compute_weekly_summary, uid)
+            if summary is None:
+                continue
+            title, body = _format_weekly_digest(summary)
+        else:
+            bal = await _compute_balance(uid)
+            kcal_in = round(bal["kcal_in"])
+            kcal_burned = round(bal["kcal_burned"])
+            net = kcal_in - kcal_burned
+            title = f"Fuel · {kcal_in} in · {kcal_burned} burned · {net} net"
+            body = bal["recommendation"] or f"{kcal_in} kcal consumed today."
+
         for sub in get_push_subscriptions(uid):
             if send_push(
                 {"endpoint": sub["endpoint"], "keys": sub["keys"]}, title, body
