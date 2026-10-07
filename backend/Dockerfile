@@ -7,6 +7,7 @@ FROM python:3.12-slim@sha256:090ba77e2958f6af52a5341f788b50b032dd4ca28377d2893dc
 # that happens, so the build just breaks outright. wget is removed again in
 # this same layer anyway (build-time only), and a fresher ca-certificates is
 # strictly better for TLS trust than freezing an old one.
+# holden:ignore:HLD_DF_020
 RUN apt-get update && apt-get install -y --no-install-recommends \
       wget ca-certificates && \
     wget -qO /tmp/litestream.tar.gz \

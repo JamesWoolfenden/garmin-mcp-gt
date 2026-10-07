@@ -10,6 +10,7 @@
 # follow-up: some of those may be used by out-of-band steps (e.g.
 # backend/setup-terraform-sa.ps1) that pike can't see since they're not
 # expressed in terraform/.
+# holden:ignore:HLD_GCP_103: -- this role grants iam.serviceAccounts.setIamPolicy and resourcemanager.projects.setIamPolicy, which pike's escalation check flags (holder can grant itself more access). That's exactly why this role definition lives in its own state, applied only by a human — never by the github-actions-terraform SA this role is bound to. See README.md.
 resource "google_project_iam_custom_role" "fuel_terraform" {
   project     = var.project_id
   role_id     = "fuel_terraform"

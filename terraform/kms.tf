@@ -12,6 +12,8 @@ resource "google_kms_crypto_key" "garmin_tokens" {
   lifecycle {
     prevent_destroy = true
   }
+
+  destroy_scheduled_duration = "2592000s" # 30 days
 }
 
 resource "google_kms_crypto_key_iam_member" "backend_encrypter" {
@@ -34,6 +36,8 @@ resource "google_kms_crypto_key" "sqlite_data" {
   lifecycle {
     prevent_destroy = true
   }
+
+  destroy_scheduled_duration = "2592000s" # 30 days
 }
 
 resource "google_kms_crypto_key_iam_member" "backend_sqlite_encrypter" {
