@@ -20,6 +20,7 @@ import os
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any
 
 import firebase_admin
@@ -973,6 +974,27 @@ def admin_delete_user(target_uid: str, uid: str = Depends(admin_user)):
 # -- Internal nudge (Cloud Scheduler) ----------------------------------------
 
 
+def _current_hour_label(tz_name: str | None) -> str:
+    """Current hour as "HH:00" in the given IANA timezone, matching the
+    format nudge_times is stored in. Cloud Scheduler fires this endpoint at
+    fixed hours (local_scheduler_sa.nudge_hours, Europe/London) regardless of
+    any individual user's timezone — this just maps that fixed firing moment
+    onto each user's own wall-clock hour, it doesn't change when the
+    endpoint is actually called.
+    """
+    try:
+        tz = ZoneInfo(tz_name or "Europe/London")
+    except ZoneInfoNotFoundError:
+        try:
+            tz = ZoneInfo("Europe/London")
+        except ZoneInfoNotFoundError:
+            # No IANA tz data available at all (shouldn't happen — tzdata is
+            # a pinned dependency — but this must never take down the whole
+            # nudge loop for every user over one bad lookup).
+            return datetime.now().strftime("%H:00")
+    return datetime.now(tz).strftime("%H:00")
+
+
 @app.post("/internal/nudge")
 async def nudge(request: Request):
     secret = request.headers.get("X-Internal-Secret", "")
@@ -981,6 +1003,12 @@ async def nudge(request: Request):
 
     pushed_total = 0
     for uid in get_all_subscribed_users():
+        profile = get_profile(uid)
+        if _current_hour_label(profile.get("timezone")) not in (
+            profile.get("nudge_times") or []
+        ):
+            continue
+
         bal = await _compute_balance(uid)
         kcal_in = round(bal["kcal_in"])
         kcal_burned = round(bal["kcal_burned"])
