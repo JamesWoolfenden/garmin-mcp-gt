@@ -9,4 +9,6 @@ resource "google_firestore_database" "fuel" {
   lifecycle {
     prevent_destroy = true
   }
+
+  point_in_time_recovery_enablement = "POINT_IN_TIME_RECOVERY_ENABLED"
 }

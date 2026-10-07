@@ -1,2 +1,7 @@
 policies:
   - .holden/policies
+scan_roots:
+  - path: "."
+    targets: [gha]
+  - path: terraform
+    targets: [terraform]  

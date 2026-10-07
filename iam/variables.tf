@@ -12,10 +12,18 @@ variable "terraform_sa_email" {
   default     = "github-actions-terraform@pike-477416.iam.gserviceaccount.com"
   description = "The CI service account this role is bound to."
   type        = string
+  validation {
+    condition     = length(trimspace(var.terraform_sa_email)) > 0
+    error_message = "terraform_sa_email must be a non-empty string"
+  }
 }
 
 variable "tfstate_bucket" {
   default     = "terraform-pike-bucket-tfstate"
   description = "The GCS bucket holding Terraform state, which the CI SA needs object access to."
   type        = string
+  validation {
+    condition     = length(trimspace(var.tfstate_bucket)) > 0
+    error_message = "tfstate_bucket must be a non-empty string"
+  }
 }
