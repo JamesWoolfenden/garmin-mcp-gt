@@ -1,16 +1,4 @@
-# The role's permission list is additive-only relative to what's live today
-# (computed via `pike compare`, see README.md): every permission currently
-# granted is kept, plus the ones pike flagged as needed by terraform/ but
-# missing (cloudkms.cryptoKeyVersions.destroy, monitoring.uptimeCheckConfigs.*).
-#
-# pike also flagged 14 currently-granted permissions as unused by the current
-# IaC (iam.roles.*, iam.serviceAccounts.actAs, secretmanager.versions.*,
-# storage.objects.*, and a few .list permissions) — those are deliberately
-# NOT removed here. Trimming to true least-privilege is a separate, deliberate
-# follow-up: some of those may be used by out-of-band steps (e.g.
-# backend/setup-terraform-sa.ps1) that pike can't see since they're not
-# expressed in terraform/.
-# holden:ignore:HLD_GCP_103: -- this role grants iam.serviceAccounts.setIamPolicy and resourcemanager.projects.setIamPolicy, which pike's escalation check flags (holder can grant itself more access). That's exactly why this role definition lives in its own state, applied only by a human — never by the github-actions-terraform SA this role is bound to. See README.md.
+# holden:ignore:HLD_GCP_103 -- escalation-class permissions (setIamPolicy); mitigated by human-only apply, see README.md.
 resource "google_project_iam_custom_role" "fuel_terraform" {
   project     = var.project_id
   role_id     = "fuel_terraform"
@@ -24,12 +12,10 @@ resource "google_project_iam_custom_role" "fuel_terraform" {
     "cloudkms.cryptoKeys.create",
     "cloudkms.cryptoKeys.get",
     "cloudkms.cryptoKeys.getIamPolicy",
-    "cloudkms.cryptoKeys.list",
     "cloudkms.cryptoKeys.setIamPolicy",
     "cloudkms.cryptoKeys.update",
     "cloudkms.keyRings.create",
     "cloudkms.keyRings.get",
-    "cloudkms.keyRings.list",
     "cloudscheduler.jobs.create",
     "cloudscheduler.jobs.delete",
     "cloudscheduler.jobs.enable",
@@ -41,11 +27,6 @@ resource "google_project_iam_custom_role" "fuel_terraform" {
     "datastore.databases.getMetadata",
     "datastore.databases.update",
     "datastore.operations.get",
-    "iam.roles.create",
-    "iam.roles.delete",
-    "iam.roles.get",
-    "iam.roles.update",
-    "iam.serviceAccounts.actAs",
     "iam.serviceAccounts.create",
     "iam.serviceAccounts.delete",
     "iam.serviceAccounts.get",
@@ -81,8 +62,6 @@ resource "google_project_iam_custom_role" "fuel_terraform" {
     "secretmanager.secrets.getIamPolicy",
     "secretmanager.secrets.setIamPolicy",
     "secretmanager.secrets.update",
-    "secretmanager.versions.access",
-    "secretmanager.versions.list",
     "serviceusage.services.disable",
     "serviceusage.services.enable",
     "serviceusage.services.get",
@@ -91,24 +70,44 @@ resource "google_project_iam_custom_role" "fuel_terraform" {
     "storage.buckets.delete",
     "storage.buckets.get",
     "storage.buckets.getIamPolicy",
-    "storage.buckets.list",
     "storage.buckets.setIamPolicy",
-    "storage.buckets.update",
-    "storage.objects.create",
-    "storage.objects.delete",
-    "storage.objects.get",
-    "storage.objects.list",
+    "storage.buckets.update"
   ]
 }
 
-# holden:ignore:HLD_GCP_059 -- this role grants iam.serviceAccounts.setIamPolicy
-# and resourcemanager.projects.setIamPolicy, which pike's escalation check
-# flags (holder can grant itself more access). That's exactly why this role
-# definition lives in its own state, applied only by a human — never by the
-# github-actions-terraform SA this role is bound to. See README.md.
+# holden:ignore:HLD_GCP_059 -- same escalation risk, bound only by human apply, see README.md.
 resource "google_project_iam_member" "fuel_terraform_project" {
   project = var.project_id
   role    = google_project_iam_custom_role.fuel_terraform.id
+  member  = "serviceAccount:${var.terraform_sa_email}"
+}
+
+# Permissions needed to run the CI pipeline itself (tofu's GCS backend,
+# and ci.yml's "Get internal secret" step before tofu runs) rather than to
+# create/manage any resource terraform/ declares. Bound to the same SA as
+# fuel_terraform.
+resource "google_project_iam_custom_role" "fuel_terraform_build" {
+  project     = var.project_id
+  role_id     = "fuel_terraform_build"
+  title       = "Fuel Terraform Build"
+  description = "Permissions to run the OpenTofu CI pipeline itself (backend state, pre-apply secret fetch)"
+
+  permissions = [
+    "cloudkms.cryptoKeys.list",      # no known use
+    "cloudkms.keyRings.list",        # no known use
+    "secretmanager.versions.access", # ci.yml "Get internal secret" step
+    "secretmanager.versions.list",   # no known use
+    "storage.buckets.list",          # no known use
+    "storage.objects.create",        # tofu GCS backend state (terraform/versions.tf)
+    "storage.objects.delete",        # tofu GCS backend state
+    "storage.objects.get",           # tofu GCS backend state
+    "storage.objects.list",          # tofu GCS backend state
+  ]
+}
+
+resource "google_project_iam_member" "fuel_terraform_build_project" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.fuel_terraform_build.id
   member  = "serviceAccount:${var.terraform_sa_email}"
 }
 
@@ -116,4 +115,11 @@ resource "google_storage_bucket_iam_member" "fuel_terraform_tfstate" {
   bucket = var.tfstate_bucket
   role   = google_project_iam_custom_role.fuel_terraform.id
   member = "serviceAccount:${var.terraform_sa_email}"
+}
+
+resource "google_storage_bucket_iam_member" "fuel_terraform_build_tfstate" {
+  bucket     = var.tfstate_bucket
+  role       = google_project_iam_custom_role.fuel_terraform_build.id
+  member     = "serviceAccount:${var.terraform_sa_email}"
+  depends_on = [time_sleep.fuel_terraform_build_propagation]
 }

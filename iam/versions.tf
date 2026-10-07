@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/google"
       version = "7.34.0"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "0.14.0"
+    }
   }
 
   # Deliberately a separate state from terraform/ (prefix "iam" vs "fuel"),
