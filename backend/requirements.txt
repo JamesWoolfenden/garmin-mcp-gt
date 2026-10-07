@@ -8,3 +8,7 @@ firebase-admin>=7.7.0
 garminconnect>=0.3.5,<0.4
 mcp>=1.0.0,<2
 google-cloud-kms>=3.18.0
+# Explicit, not just relied-on-via-OS: zoneinfo has no bundled tz data on
+# its own on some platforms (e.g. Windows dev machines; possibly a minimal
+# container), used by _current_hour_label for per-user nudge_times filtering.
+tzdata>=2026.2
