@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
 import { logEntry, deleteFood, deleteActivity, getBalance, sendChat, getChatHistory, createGarminUploadToken, getProfile, updateProfile } from "./lib/api";
 import { usePush } from "./hooks/usePush";
 import { useAuth } from "./hooks/useAuth";
@@ -182,7 +183,13 @@ function Chat() {
           <p className="empty">Ask about your activity, sleep, heart rate…</p>
         )}
         {messages.map((m, i) => (
-          <div key={i} className={`chat-msg chat-msg-${m.role}`}>{m.text}</div>
+          <div key={i} className={`chat-msg chat-msg-${m.role}`}>
+            {m.role === "assistant" ? (
+              <ReactMarkdown>{m.text}</ReactMarkdown>
+            ) : (
+              m.text
+            )}
+          </div>
         ))}
         {loading && <div className="chat-msg chat-msg-assistant">…</div>}
         <div ref={bottomRef} />
