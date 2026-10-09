@@ -1,7 +1,15 @@
 policies:
   - .holden/policies
+# HLD_TF_073: terraform/ manages 19 distinct resource types (Cloud Run, KMS,
+# Firestore, Scheduler, Secret Manager, IAM, WIF, storage) for one small
+# personal-project backend. Decomposing into per-concern submodules would be
+# pure ceremony at this scale; accepted as-is.
+skip_policies:
+  - HLD_TF_073
 scan_roots:
   - path: "."
     targets: [gha]
   - path: terraform
     targets: [terraform]  
+  - path: backend
+    targets: [dockerfile]  
