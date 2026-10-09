@@ -1,0 +1,44 @@
+id: HLD_GCP_555
+name: Custom roles granting Cloud Storage object permissions must not be bound at project level
+cloud: gcp
+principle: identity-and-access
+severity: LOW
+rationale: |
+  HLD_GCP_262 blocks roles/storage.objectViewer, objectCreator and objectAdmin
+  from being granted via google_project_iam_member/_binding, since that gives
+  the principal that access to every bucket in the project -- including
+  buckets created later -- rather than just the one a workload actually needs.
+  A custom role (google_project_iam_custom_role) that bundles the equivalent
+  storage.objects.* permissions is invisible to that check, because it only
+  matches the literal predefined-role name on the role attribute and never
+  inspects a referenced custom role's own permissions list. The risk is the
+  same either way: the project-level binding alone grants object read/write
+  access across every bucket in the project.
+remediation: |
+  Replace (or supplement) the project-level binding with a bucket-scoped one:
+
+    resource "google_storage_bucket_iam_member" "state" {
+      bucket = google_storage_bucket.tfstate.name
+      role   = google_project_iam_custom_role.custom.id
+      member = "serviceAccount:${google_service_account.ci.email}"
+    }
+
+  If the role also carries permissions that are only valid at project scope
+  (e.g. secretmanager.versions.access), split it: keep the storage.objects.*
+  permissions in a role bound only at bucket scope, and bind the rest via a
+  separate role with no bucket-level duplicate.
+resources:
+  google_project_iam_member:
+    linked_resource:
+      attr: role
+      type: google_project_iam_custom_role
+      where:
+        path: permissions
+        none_match: "^storage\\.objects\\."
+  google_project_iam_binding:
+    linked_resource:
+      attr: role
+      type: google_project_iam_custom_role
+      where:
+        path: permissions
+        none_match: "^storage\\.objects\\."

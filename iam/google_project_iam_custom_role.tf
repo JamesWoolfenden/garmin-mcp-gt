@@ -82,15 +82,33 @@ resource "google_project_iam_member" "fuel_terraform_project" {
   member  = "serviceAccount:${var.terraform_sa_email}"
 }
 
-# Permissions needed to run the CI pipeline itself (tofu's GCS backend,
-# and ci.yml's "Get internal secret" step before tofu runs) rather than to
-# create/manage any resource terraform/ declares. Bound to the same SA as
-# fuel_terraform.
+# Bucket-scoped only (HLD_GCP_555): storage.objects.* for tofu's GCS backend
+# state. Bound ONLY via fuel_terraform_build_tfstate below, never at project
+# level -- there's no need for this SA to read/write objects in every bucket
+# in the project (e.g. terraform/sqlite.tf's CMEK bucket) just to manage the
+# one tfstate bucket.
 resource "google_project_iam_custom_role" "fuel_terraform_build" {
   project     = var.project_id
   role_id     = "fuel_terraform_build"
   title       = "Fuel Terraform Build"
-  description = "Permissions to run the OpenTofu CI pipeline itself (backend state, pre-apply secret fetch)"
+  description = "Permissions to run the OpenTofu CI pipeline itself (GCS backend state)"
+
+  permissions = [
+    "storage.objects.create", # tofu GCS backend state (terraform/versions.tf)
+    "storage.objects.delete", # tofu GCS backend state
+    "storage.objects.get",    # tofu GCS backend state
+    "storage.objects.list",   # tofu GCS backend state
+  ]
+}
+
+# Project-scoped-only permissions (no bucket-scoped equivalent needed) that
+# the CI pipeline itself uses -- kept separate from fuel_terraform_build so
+# that role never needs a project-level binding. See iam/README.md.
+resource "google_project_iam_custom_role" "fuel_terraform_build_metadata" {
+  project     = var.project_id
+  role_id     = "fuel_terraform_build_metadata"
+  title       = "Fuel Terraform Build Metadata"
+  description = "Project-scoped permissions the OpenTofu CI pipeline needs beyond GCS backend state"
 
   permissions = [
     "cloudkms.cryptoKeys.list",      # no known use
@@ -98,16 +116,12 @@ resource "google_project_iam_custom_role" "fuel_terraform_build" {
     "secretmanager.versions.access", # ci.yml "Get internal secret" step
     "secretmanager.versions.list",   # no known use
     "storage.buckets.list",          # no known use
-    "storage.objects.create",        # tofu GCS backend state (terraform/versions.tf)
-    "storage.objects.delete",        # tofu GCS backend state
-    "storage.objects.get",           # tofu GCS backend state
-    "storage.objects.list",          # tofu GCS backend state
   ]
 }
 
-resource "google_project_iam_member" "fuel_terraform_build_project" {
+resource "google_project_iam_member" "fuel_terraform_build_metadata_project" {
   project = var.project_id
-  role    = google_project_iam_custom_role.fuel_terraform_build.id
+  role    = google_project_iam_custom_role.fuel_terraform_build_metadata.id
   member  = "serviceAccount:${var.terraform_sa_email}"
 }
 
