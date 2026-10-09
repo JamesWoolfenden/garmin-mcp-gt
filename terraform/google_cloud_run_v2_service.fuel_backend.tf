@@ -108,7 +108,7 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
 
   lifecycle {
     ignore_changes = [
-      client,         # set by gcloud, not Terraform
+      client, # set by gcloud, not Terraform
       client_version,
     ]
   }
