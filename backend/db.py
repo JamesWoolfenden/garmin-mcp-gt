@@ -110,6 +110,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             registered_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS access_requests (
+            user_id     TEXT PRIMARY KEY,
+            email       TEXT NOT NULL,
+            requested_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS chat_history (
             id          TEXT PRIMARY KEY,
             user_id     TEXT NOT NULL,
@@ -210,6 +216,36 @@ def list_registered_users() -> list[dict]:
 
 def delete_registered_user(user_id: str) -> None:
     get_db().execute("DELETE FROM registered_users WHERE user_id=?", (user_id,))
+    get_db().commit()
+
+
+# ── Access requests (invite-only allowlist gate) ────────────────────────────
+
+
+def create_access_request(user_id: str, email: str) -> bool:
+    """Record a request. Returns True if this was a new request, False if
+    this user already has one on file (INSERT OR IGNORE dedupes by user_id)."""
+    cur = get_db().execute(
+        "INSERT OR IGNORE INTO access_requests (user_id, email, requested_at) VALUES (?, ?, ?)",
+        (user_id, email, datetime.now(timezone.utc).isoformat()),
+    )
+    get_db().commit()
+    return cur.rowcount > 0
+
+
+def list_access_requests() -> list[dict]:
+    rows = (
+        get_db()
+        .execute(
+            "SELECT user_id, email, requested_at FROM access_requests ORDER BY requested_at DESC"
+        )
+        .fetchall()
+    )
+    return [dict(r) for r in rows]
+
+
+def delete_access_request(user_id: str) -> None:
+    get_db().execute("DELETE FROM access_requests WHERE user_id=?", (user_id,))
     get_db().commit()
 
 

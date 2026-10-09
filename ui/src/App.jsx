@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { logEntry, deleteFood, deleteActivity, getBalance, sendChat, getChatHistory, createGarminUploadToken, getProfile, updateProfile } from "./lib/api";
+import { logEntry, deleteFood, deleteActivity, getBalance, sendChat, getChatHistory, createGarminUploadToken, getProfile, updateProfile, requestAccess } from "./lib/api";
 import { usePush } from "./hooks/usePush";
 import { useAuth } from "./hooks/useAuth";
 import { signInWithGoogle, signInWithEmail, registerWithEmail, signOutUser } from "./firebase";
@@ -369,6 +369,18 @@ function GarminConnect({ nested = false }) {
 }
 
 function AccessDenied() {
+  const [status, setStatus] = useState("idle"); // idle | sending | sent | error
+
+  const handleRequest = async () => {
+    setStatus("sending");
+    try {
+      await requestAccess();
+      setStatus("sent");
+    } catch {
+      setStatus("error");
+    }
+  };
+
   return (
     <div className="signin">
       <h1 className="wordmark">fuel</h1>
@@ -377,9 +389,25 @@ function AccessDenied() {
         <p style={{fontSize:"14px",color:"var(--muted)",lineHeight:1.6}}>
           This app is invite-only. Your account isn't on the access list.
         </p>
-        <p style={{fontSize:"13px",color:"var(--muted)",marginTop:"16px"}}>
-          If you think this is a mistake, contact the app owner.
-        </p>
+        {status === "sent" ? (
+          <p style={{fontSize:"13px",color:"var(--muted)",marginTop:"16px"}}>
+            Request sent — you'll get access once it's approved.
+          </p>
+        ) : (
+          <>
+            <button
+              className="push-btn"
+              style={{marginTop:"16px"}}
+              disabled={status === "sending"}
+              onClick={handleRequest}
+            >
+              {status === "sending" ? "Sending…" : "Request access"}
+            </button>
+            {status === "error" && (
+              <p className="error-banner" style={{marginTop:"8px"}}>Couldn't send the request. Try again.</p>
+            )}
+          </>
+        )}
       </div>
       <button className="push-btn" onClick={() => { signOutUser(); window.location.reload(); }}>
         Sign out
