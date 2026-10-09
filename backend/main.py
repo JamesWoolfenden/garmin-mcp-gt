@@ -38,7 +38,9 @@ import secrets
 
 from db import (
     consume_upload_token,
+    create_access_request,
     create_upload_token,
+    delete_access_request,
     delete_food_entry,
     delete_manual_activity,
     delete_push_subscription,
@@ -52,6 +54,7 @@ from db import (
     get_user_for_mcp_key,
     insert_food_entry,
     insert_manual_activity,
+    list_access_requests,
     list_registered_users,
     load_chat_history,
     register_user,
@@ -101,7 +104,7 @@ _garmin_cache: dict[str, tuple[float, tuple]] = {}
 _GARMIN_TTL = 300
 
 
-async def current_user(request: Request) -> str:
+def _verify_firebase_token(request: Request) -> tuple[str, str]:
     token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -109,9 +112,11 @@ async def current_user(request: Request) -> str:
         decoded = firebase_auth.verify_id_token(token)
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
+    return decoded["uid"], (decoded.get("email") or "").lower()
 
-    uid = decoded["uid"]
-    email = (decoded.get("email") or "").lower()
+
+async def current_user(request: Request) -> str:
+    uid, email = _verify_firebase_token(request)
 
     if _ALLOWED_EMAILS and email not in _ALLOWED_EMAILS:
         raise HTTPException(status_code=403, detail="Access not permitted")
@@ -119,6 +124,14 @@ async def current_user(request: Request) -> str:
     # Record registration on first seen
     register_user(uid, email)
     return uid
+
+
+async def verified_identity(request: Request) -> tuple[str, str]:
+    """Like current_user, but skips the ALLOWED_EMAILS gate. Only for the
+    access-request flow, where the caller isn't on the allowlist yet by
+    definition -- still requires a real Firebase ID token, so a request
+    can't be spoofed with an arbitrary email."""
+    return _verify_firebase_token(request)
 
 
 async def admin_user(uid: str = Depends(current_user)) -> str:
@@ -969,6 +982,39 @@ def admin_delete_user(target_uid: str, uid: str = Depends(admin_user)):
         logger.warning(f"Could not disable Firebase user {target_uid}: {e}")
     delete_registered_user(target_uid)
     return {"ok": True, "uid": target_uid}
+
+
+@app.get("/admin/access-requests")
+def admin_list_access_requests(uid: str = Depends(admin_user)):
+    """List pending access requests (durable fallback if the push below is missed)."""
+    return list_access_requests()
+
+
+@app.delete("/admin/access-requests/{target_uid}")
+def admin_dismiss_access_request(target_uid: str, uid: str = Depends(admin_user)):
+    """Dismiss a request -- call after adding the email to ALLOWED_EMAILS, or to reject it."""
+    delete_access_request(target_uid)
+    return {"ok": True, "uid": target_uid}
+
+
+# -- Access requests (invite-only allowlist gate) ----------------------------
+
+
+@app.post("/access-request")
+def request_access(identity: tuple[str, str] = Depends(verified_identity)):
+    """Called from the "Request access" button on the access-denied screen.
+    Requires a real Firebase token (proves email ownership) but deliberately
+    does not require ALLOWED_EMAILS membership -- that's the whole point."""
+    uid, email = identity
+    is_new = create_access_request(uid, email)
+    if is_new and ADMIN_UID:
+        for sub in get_push_subscriptions(ADMIN_UID):
+            send_push(
+                {"endpoint": sub["endpoint"], "keys": sub["keys"]},
+                "Access request",
+                f"{email} wants access to fuel.",
+            )
+    return {"ok": True}
 
 
 # -- Internal nudge (Cloud Scheduler) ----------------------------------------
