@@ -1,0 +1,83 @@
+{
+  "scan_date": "2026-10-07T00:00:00Z",
+  "scan_path": ".",
+  "findings": [
+    {
+      "id": "HOLDEN_AI_002",
+      "status": "open",
+      "first_seen": "2026-10-07",
+      "last_seen": "2026-10-08",
+      "unresolved_since": "2026-10-07",
+      "suppression_reason": null,
+      "principle": "identity-and-access",
+      "severity": "HIGH",
+      "confidence": "high",
+      "title": "Unattended, unreviewed tofu apply runs as an SA holding project-wide setIamPolicy permissions",
+      "file": ".github/workflows/ci.yml",
+      "line": 123,
+      "resource": "tofu (job)",
+      "related_resources": [
+        "iam/google_project_iam_custom_role.tf:fuel_terraform",
+        "terraform/iam.tf:deploy_roles"
+      ],
+      "explanation": "ci.yml's tofu job runs `tofu apply -auto-approve` on every push to main with no human in the loop, using github-actions-terraform. That SA's fuel_terraform role (iam/google_project_iam_custom_role.tf) already carries iam.serviceAccounts.setIamPolicy and resourcemanager.projects.setIamPolicy project-wide -- the exact pair the repo's own README calls escalation-class and specifically keeps the iam/ module human-apply-only to contain. That containment only covers edits to iam/'s own role definitions. It does nothing for the equivalent outcome via terraform/, which IS auto-applied: a single merged PR adding one additive google_project_iam_member resource there would be picked up and executed unattended. I confirmed via `gh api repos/JamesWoolfenden/garmin-mcp-gt/branches/main/protection` that main has no branch protection (404 Branch not protected), so there is no required-review gate before a push reaches that auto-apply. This isn't something a single-resource or two-resource deterministic rule can see -- it requires correlating the workflow's trigger/approval model, the bound role's permission list in a different Terraform root module, and live GitHub branch-protection state.",
+      "remediation": "Add required PR reviews + status checks on main (branch protection or a rulest), or move the apply step behind a GitHub Environment with required reviewers, so a merge alone can't trigger an unattended apply by a principal that holds project IAM-policy-write permissions.",
+      "fixable": false,
+      "decision": "Accepted as risk 2026-10-08 -- solo project, single committer. Revisit if a collaborator is ever added or main stops being single-pusher."
+    },
+    {
+      "id": "HOLDEN_AI_003",
+      "status": "fixed",
+      "first_seen": "2026-10-07",
+      "last_seen": "2026-10-08",
+      "suppression_reason": null,
+      "principle": "identity-and-access",
+      "severity": "MEDIUM",
+      "confidence": "high",
+      "title": "fuel_terraform_build's storage.objects.* is also bound at project scope, reaching the CMEK sqlite bucket it was never meant for",
+      "file": "iam/google_project_iam_custom_role.tf",
+      "line": 108,
+      "resource": "google_project_iam_member.fuel_terraform_build_project",
+      "related_resources": [
+        "iam/google_project_iam_custom_role.tf:fuel_terraform_build (permissions, lines 95-105)",
+        "iam/google_project_iam_custom_role.tf:fuel_terraform_build_tfstate (line 120)",
+        "terraform/sqlite.tf:google_storage_bucket.sqlite"
+      ],
+      "explanation": "fuel_terraform_build bundles storage.objects.{create,get,delete,list} (needed only for tofu's GCS state backend) together with project-scoped-only permissions (secretmanager.versions.access/list, cloudkms.*.list, storage.buckets.list). Because the whole role is bound both at project level (fuel_terraform_build_project, line 108) and at bucket level for the tfstate bucket specifically (fuel_terraform_build_tfstate, line 120), the project-level binding alone already grants github-actions-terraform object read/write/delete on every bucket in the project -- including terraform/sqlite.tf's CMEK-encrypted sqlite bucket, which sqlite.tf's own design (uniform_bucket_level_access, a dedicated storage.objectAdmin binding scoped only to fuel_backend's SA) clearly intends to keep single-accessor. The bucket-scoped binding already covers the one bucket the object permissions are actually for, so the project-level inclusion of those four permissions is pure excess exposure, not a functional need. HLD_GCP_262 (Cloud Storage object-level roles should be granted per bucket, not at project level) exists and covers exactly this pattern for google_project_iam_member -- but its rule only pattern-matches the literal role string against roles/storage.objectViewer|objectCreator|objectAdmin, so it can't see object permissions bundled inside a referenced custom role and never evaluates this resource at all.",
+      "remediation": "Split fuel_terraform_build further: keep storage.objects.* in a role bound only at bucket scope (fuel_terraform_build_tfstate already does this), and bind the remaining project-scoped-only permissions (secretmanager.versions.*, cloudkms.*.list, storage.buckets.list) via a separate role with no bucket-level duplicate.",
+      "supersedes": "HLD_GCP_262",
+      "fixable": false,
+      "outcome": "fixed",
+      "decision": "Fixed and applied live 2026-10-08. fuel_terraform_build trimmed to storage.objects.* only, bound exclusively at bucket scope. The other 5 permissions moved to a new fuel_terraform_build_metadata role, bound only at project level. Net permission set on the SA unchanged -- verified identical before/after via diff. HLD_GCP_555 no longer fires (holden scan iam: 0 failed / 311 passed)."
+    },
+    {
+      "id": "HOLDEN_AI_001",
+      "status": "fixed",
+      "first_seen": "2026-10-07",
+      "last_seen": "2026-10-08",
+      "suppression_reason": null,
+      "principle": "reliability",
+      "severity": "MEDIUM",
+      "confidence": "high",
+      "title": "Cloud Scheduler's internal-secret header goes stale on rotation while Cloud Run's copy updates live",
+      "file": "terraform/scheduler.tf",
+      "line": 17,
+      "resource": "google_cloud_scheduler_job.nudge",
+      "related_resources": [
+        "terraform/google_cloud_run_v2_service.fuel_backend.tf:fuel_backend",
+        "terraform/variables.tf:internal_secret"
+      ],
+      "explanation": "scheduler.tf's http_target.headers[\"X-Internal-Secret\"] is set from var.internal_secret, but `lifecycle { ignore_changes = [http_target[0].headers] }` meant Terraform never re-applied that header after the first apply, while google_cloud_run_v2_service.fuel_backend.tf's secret_key_ref (version = \"latest\") always tracks the current Secret Manager value -- an asymmetry that would silently break the daily nudge job's auth on any secret rotation.",
+      "remediation": "Removed the `lifecycle { ignore_changes = [http_target[0].headers] }` block from google_cloud_scheduler_job.nudge in terraform/scheduler.tf (2026-10-08). The original commit (d919668) that added it gave no reason; user confirmed no known reason to keep it.",
+      "fixable": false,
+      "outcome": "fixed"
+    }
+  ],
+  "suggested_policies": [
+    {
+      "rationale": "HLD_GCP_262 blocks roles/storage.objectViewer|objectCreator|objectAdmin from being granted via google_project_iam_member/_binding, but only matches those three literal predefined-role strings on the `role` attribute. A custom role (google_project_iam_custom_role) that bundles storage.objects.* permissions and gets bound the same way via its `.id` reference is invisible to that check -- confirmed against this repo's iam/google_project_iam_custom_role.tf, where fuel_terraform_build_project does exactly this. The existing `linked_resource` + `none_match` primitives (already in the live schema) are sufficient to express it with no new DSL primitive needed. Implemented as HLD_GCP_555 and pushed directly to JamesWoolfenden/holden main (2026-10-08) -- policy, fixture, and test all included.",
+      "yaml": "id: HLD_GCP_555\nname: Custom roles granting Cloud Storage object permissions must not be bound at project level\ncloud: gcp\nprinciple: identity-and-access\nseverity: LOW\nrationale: |\n  A custom role containing storage.objects.* permissions, bound via\n  google_project_iam_member/_binding, grants that access to every bucket in\n  the project -- including buckets created later -- not just the one the\n  workload actually needs. HLD_GCP_262 catches this for the three predefined\n  storage object roles (objectViewer/objectCreator/objectAdmin) but can't see\n  inside a referenced custom role's permission list, so the same over-exposure\n  via a custom role goes undetected.\nmessage: |\n  This project-level IAM member binds a custom role that grants\n  storage.objects.* permissions project-wide. Scope it to the specific\n  bucket(s) needed with a google_storage_bucket_iam_member instead.\nremediation: |\n  Replace (or supplement) the project-level binding with a bucket-scoped one:\n\n  resource \"google_storage_bucket_iam_member\" \"state\" {\n    bucket = google_storage_bucket.tfstate.name\n    role   = google_project_iam_custom_role.custom.id\n    member = \"serviceAccount:${google_service_account.ci.email}\"\n  }\nresources:\n  google_project_iam_member:\n    linked_resource:\n      attr: role\n      type: google_project_iam_custom_role\n      where:\n        path: permissions\n        none_match: \"^storage\\\\.objects\\\\.\"\n  google_project_iam_binding:\n    linked_resource:\n      attr: role\n      type: google_project_iam_custom_role\n      where:\n        path: permissions\n        none_match: \"^storage\\\\.objects\\\\.\"\n"
+    }
+  ],
+  "suggested_suppressions": []
+}
