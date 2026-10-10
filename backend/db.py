@@ -141,6 +141,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         "ALTER TABLE food_entries ADD COLUMN macros_json TEXT",
         "ALTER TABLE user_profile ADD COLUMN height_cm INTEGER",
         "ALTER TABLE user_profile ADD COLUMN waist_cm INTEGER",
+        "ALTER TABLE user_profile ADD COLUMN latitude REAL",
+        "ALTER TABLE user_profile ADD COLUMN longitude REAL",
     ]:
         try:
             conn.execute(migration)
@@ -429,6 +431,8 @@ DEFAULT_PROFILE = {
     "timezone": "Europe/London",
     "height_cm": None,
     "waist_cm": None,
+    "latitude": None,
+    "longitude": None,
 }
 
 
@@ -449,8 +453,9 @@ def upsert_profile(user_id: str, updates: dict) -> dict:
     current = get_profile(user_id)
     merged = {**current, **updates, "user_id": user_id}
     get_db().execute(
-        "INSERT OR REPLACE INTO user_profile (user_id, kcal_target, nudge_times, timezone, height_cm, waist_cm) "
-        "VALUES (:user_id, :kcal_target, :nudge_times, :timezone, :height_cm, :waist_cm)",
+        "INSERT OR REPLACE INTO user_profile "
+        "(user_id, kcal_target, nudge_times, timezone, height_cm, waist_cm, latitude, longitude) "
+        "VALUES (:user_id, :kcal_target, :nudge_times, :timezone, :height_cm, :waist_cm, :latitude, :longitude)",
         {**merged, "nudge_times": json.dumps(merged["nudge_times"])},
     )
     get_db().commit()

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { logEntry, deleteFood, deleteActivity, getBalance, sendChat, getChatHistory, createGarminUploadToken, getProfile, updateProfile, requestAccess } from "./lib/api";
+import { logEntry, deleteFood, deleteActivity, getBalance, sendChat, getChatHistory, createGarminUploadToken, getProfile, updateProfile, requestAccess, getCyclingForecast, getProgression } from "./lib/api";
 import { usePush } from "./hooks/usePush";
 import { useAuth } from "./hooks/useAuth";
 import { signInWithGoogle, signInWithEmail, registerWithEmail, signOutUser } from "./firebase";
@@ -214,6 +214,9 @@ function Settings() {
   const [nudgeTimes, setNudgeTimes] = useState("");
   const [heightCm, setHeightCm] = useState("");
   const [waistCm, setWaistCm] = useState("");
+  const [latitude, setLatitude] = useState("");
+  const [longitude, setLongitude] = useState("");
+  const [locating, setLocating] = useState(false);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState(null);
@@ -223,7 +226,23 @@ function Settings() {
     setNudgeTimes((p.nudge_times || []).join(", "));
     setHeightCm(p.height_cm ? String(p.height_cm) : "");
     setWaistCm(p.waist_cm ? String(p.waist_cm) : "");
+    setLatitude(p.latitude != null ? String(p.latitude) : "");
+    setLongitude(p.longitude != null ? String(p.longitude) : "");
     setSaved(p);
+  };
+
+  const useMyLocation = () => {
+    if (!navigator.geolocation) return;
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLatitude(String(pos.coords.latitude.toFixed(4)));
+        setLongitude(String(pos.coords.longitude.toFixed(4)));
+        setLocating(false);
+      },
+      () => setLocating(false),
+      { timeout: 10000 }
+    );
   };
 
   useEffect(() => {
@@ -249,6 +268,8 @@ function Settings() {
         nudge_times: times,
         ...(heightCm ? { height_cm: parseInt(heightCm) } : {}),
         ...(waistCm ? { waist_cm: parseInt(waistCm) } : {}),
+        ...(latitude ? { latitude: parseFloat(latitude) } : {}),
+        ...(longitude ? { longitude: parseFloat(longitude) } : {}),
       };
       const saved = await updateProfile(updates);
       applyProfile(saved);
@@ -307,6 +328,21 @@ function Settings() {
               onChange={e => setNudgeTimes(e.target.value)}
               style={{display:"block",width:"100%",marginTop:"4px"}}
               placeholder="08:00, 13:00, 15:00, 20:00" />
+          </label>
+          <label style={{fontSize:"13px",color:"var(--text)"}}>
+            Location (for the cycling forecast)
+            <div style={{display:"flex",gap:"6px",marginTop:"4px"}}>
+              <input className="log-input" type="number" step="any" value={latitude}
+                onChange={e => setLatitude(e.target.value)}
+                style={{flex:1}} placeholder="Latitude" />
+              <input className="log-input" type="number" step="any" value={longitude}
+                onChange={e => setLongitude(e.target.value)}
+                style={{flex:1}} placeholder="Longitude" />
+            </div>
+            <button type="button" className="link-btn" style={{marginTop:"4px"}}
+              onClick={useMyLocation} disabled={locating}>
+              {locating ? "Locating…" : "Use my location"}
+            </button>
           </label>
           <button className="log-btn" type="submit" disabled={loading}>
             {loading ? "Saving…" : "Save"}
@@ -457,6 +493,124 @@ function SignIn() {
   );
 }
 
+function Sparkline({ data, width = 280, height = 48, color = "var(--accent)" }) {
+  if (!data || data.length < 2) {
+    return <p style={{fontSize:"12px",color:"var(--muted)"}}>Not enough data yet.</p>;
+  }
+  const ys = data.map(d => d.y);
+  const min = Math.min(...ys), max = Math.max(...ys);
+  const range = max - min || 1;
+  const pad = 4;
+  const points = data.map((d, i) => {
+    const x = pad + (i / (data.length - 1)) * (width - pad * 2);
+    const y = height - pad - ((d.y - min) / range) * (height - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{display:"block",maxWidth:"100%"}}>
+      <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function DayCard({ day, best }) {
+  return (
+    <div style={{
+      minWidth:"76px",padding:"10px 8px",borderRadius:"var(--radius)",textAlign:"center",flexShrink:0,
+      background: best ? "var(--ok-dim)" : "var(--surface)",
+      border: `1px solid ${best ? "var(--ok)" : "var(--border)"}`,
+    }}>
+      <p style={{fontSize:"11px",color:"var(--muted)"}}>{formatDate(day.date)}</p>
+      <p style={{fontSize:"20px",margin:"4px 0"}}>{day.rideable ? "🚴" : "🌧"}</p>
+      <p style={{fontSize:"11px",color:"var(--text)"}}>{Math.round(day.temp_max_c)}°</p>
+      <p style={{fontSize:"10px",color:"var(--muted)"}}>{Math.round(day.max_wind_mph)}mph wind</p>
+      {day.is_today && day.readiness && (
+        <p style={{fontSize:"10px",color:"var(--accent)",marginTop:"2px"}}>{day.readiness.label}</p>
+      )}
+    </div>
+  );
+}
+
+function CyclingProgress() {
+  const [forecast, setForecast] = useState(null);
+  const [forecastError, setForecastError] = useState(null);
+  const [progression, setProgression] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      getCyclingForecast().catch(e => ({ error: e.message })),
+      getProgression().catch(() => ({ vo2max: [], weight_trend: [] })),
+    ]).then(([f, p]) => {
+      if (cancelled) return;
+      if (f.error) setForecastError(f.error);
+      else setForecast(f);
+      setProgression(p);
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) return <p className="empty">Loading…</p>;
+
+  const vo2Points = (progression?.vo2max || [])
+    .filter(d => d.vo2max != null)
+    .map(d => ({ y: d.vo2max }));
+  const weightPoints = (progression?.weight_trend || [])
+    .filter(d => d.avg_weight_kg != null)
+    .map(d => ({ y: d.avg_weight_kg }));
+  const latestWeight = progression?.weight_trend?.length
+    ? progression.weight_trend[progression.weight_trend.length - 1]
+    : null;
+  const latestVo2 = progression?.vo2max?.length
+    ? [...progression.vo2max].reverse().find(d => d.vo2max != null)
+    : null;
+
+  return (
+    <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:"24px"}}>
+      <section>
+        <h2 style={{fontSize:"14px",color:"var(--muted)",marginBottom:"10px"}}>Best days to ride this week</h2>
+        {forecastError === "location_not_set" ? (
+          <p style={{fontSize:"13px",color:"var(--muted)"}}>
+            Set your location in Settings to see a cycling forecast.
+          </p>
+        ) : forecastError || !forecast ? (
+          <p style={{fontSize:"13px",color:"var(--muted)"}}>Couldn't load the forecast.</p>
+        ) : (
+          <div style={{display:"flex",gap:"8px",overflowX:"auto",paddingBottom:"4px"}}>
+            {forecast.days.map(d => (
+              <DayCard key={d.date} day={d} best={forecast.best_dates.includes(d.date)} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 style={{fontSize:"14px",color:"var(--muted)",marginBottom:"10px"}}>Fitness (VO2max)</h2>
+        <Sparkline data={vo2Points} />
+        <p style={{fontSize:"12px",color:"var(--muted)",marginTop:"4px"}}>
+          {latestVo2 ? `Latest: ${latestVo2.vo2max}` : "No VO2max data yet."}
+        </p>
+      </section>
+
+      <section>
+        <h2 style={{fontSize:"14px",color:"var(--muted)",marginBottom:"10px"}}>Weight trend</h2>
+        <Sparkline data={weightPoints} color="var(--ok)" />
+        <p style={{fontSize:"12px",color:"var(--muted)",marginTop:"4px"}}>
+          {latestWeight
+            ? `${latestWeight.avg_weight_kg}kg${
+                latestWeight.change_from_prev_week_kg != null
+                  ? ` · ${latestWeight.change_from_prev_week_kg > 0 ? "+" : ""}${latestWeight.change_from_prev_week_kg}kg vs last week`
+                  : ""
+              }`
+            : "No weight data yet."}
+        </p>
+      </section>
+    </div>
+  );
+}
+
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -554,6 +708,7 @@ export default function App() {
           <span className="wordmark">fuel</span>
           <div style={{display:"flex",gap:"0.5rem",alignItems:"center"}}>
             <button className={`push-btn${tab === "food" ? " active" : ""}`} onClick={() => setTab("food")}>Log</button>
+            <button className={`push-btn${tab === "ride" ? " active" : ""}`} onClick={() => setTab("ride")}>Ride</button>
             <button className={`push-btn${tab === "chat" ? " active" : ""}`} onClick={() => setTab("chat")}>Ask</button>
             <PushToggle pushState={pushState} onSubscribe={subscribe} onUnsubscribe={unsubscribe} />
             <button className="push-btn" onClick={signOutUser}>Sign out</button>
@@ -561,7 +716,7 @@ export default function App() {
         </div>
       </header>
 
-      {tab === "chat" ? <Chat /> : (
+      {tab === "chat" ? <Chat /> : tab === "ride" ? <CyclingProgress /> : (
         <>
           <div className="date-nav">
             <button className="date-nav-btn" onClick={() => shiftDate(-1)}>‹</button>

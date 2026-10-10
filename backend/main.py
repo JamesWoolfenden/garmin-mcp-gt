@@ -282,6 +282,41 @@ def _compute_weight_trend(g, weeks: int = 12) -> list[dict[str, Any]]:
     return results
 
 
+def _compute_vo2max(g, days: int = 30) -> list[dict[str, Any]]:
+    """VO2max/lactate-threshold history, using the caller's already-open Garmin
+    session (see _compute_weight_trend for why this can't go through
+    garmin_mcp's global client())."""
+    days = max(1, min(days, 365))
+    today = date.today()
+    results = []
+    for i in range(days - 1, -1, -1):
+        d = (today - timedelta(days=i)).isoformat()
+        try:
+            raw = g.get_max_metrics(d)
+            for entry in raw if isinstance(raw, list) else []:
+                generic = entry.get("generic") or {}
+                vo2 = generic.get("vo2MaxValue")
+                lt_hr = generic.get("lactateThresholdHeartRate")
+                lt_speed = generic.get("lactateThresholdSpeed")
+                if vo2 or lt_hr:
+                    results.append(
+                        {
+                            "date": d,
+                            "vo2max": round(vo2, 1) if vo2 else None,
+                            "lactate_threshold_hr_bpm": lt_hr,
+                            "lactate_threshold_pace_min_per_km": round(
+                                1000 / lt_speed / 60, 2
+                            )
+                            if lt_speed
+                            else None,
+                        }
+                    )
+                    break
+        except Exception:
+            continue
+    return results
+
+
 async def fetch_garmin(uid: str) -> dict[str, Any] | None:
     return await run_in_threadpool(_garmin_today, uid)
 
@@ -893,6 +928,8 @@ class ProfileUpdate(BaseModel):
     timezone: str | None = None
     height_cm: int | None = None
     waist_cm: int | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 @app.get("/profile")
@@ -904,6 +941,66 @@ def get_profile_route(uid: str = Depends(current_user)) -> dict:
 def update_profile(body: ProfileUpdate, uid: str = Depends(current_user)):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     return upsert_profile(uid, updates)
+
+
+# -- Cycling forecast (weather rideability + today's readiness) --------------
+
+
+@app.get("/cycling-forecast")
+async def cycling_forecast(uid: str = Depends(current_user)):
+    profile = get_profile(uid)
+    lat, lon = profile.get("latitude"), profile.get("longitude")
+    if lat is None or lon is None:
+        return {"error": "location_not_set"}
+
+    from garmin_mcp import get_weather as _get_weather
+
+    try:
+        weather = await run_in_threadpool(_get_weather, lat, lon, 7)
+    except Exception as e:
+        logger.warning(f"Weather fetch failed: {e}")
+        return {"error": "weather_unavailable"}
+
+    garmin, _activities, wellness = await _fetch_garmin_data(uid)
+    if garmin and garmin.get("body_battery"):
+        bb = garmin["body_battery"]
+        wellness["body_battery_charged"] = (
+            bb.get("current") if bb.get("current") is not None else bb.get("charged")
+        )
+    readiness = _compute_readiness(wellness or {})
+
+    today = today_str()
+    days = weather.get("forecast", [])
+    for day in days:
+        day["is_today"] = day["date"] == today
+        if day["is_today"]:
+            day["readiness"] = readiness
+
+    best_dates = [
+        d["date"]
+        for d in sorted(
+            (d for d in days if d.get("rideable")),
+            key=lambda d: (d["max_wind_mph"], d["precipitation_mm"]),
+        )
+    ][:3]
+
+    return {"days": days, "best_dates": best_dates}
+
+
+# -- Progression (VO2max + weight trend) --------------------------------------
+
+
+@app.get("/progression")
+async def progression(uid: str = Depends(current_user)):
+    try:
+        with GarminSession(uid) as g:
+            weight_trend = await run_in_threadpool(_compute_weight_trend, g, 12)
+            vo2max = await run_in_threadpool(_compute_vo2max, g, 90)
+    except Exception as e:
+        logger.warning(f"Progression fetch failed: {e}")
+        return {"vo2max": [], "weight_trend": []}
+
+    return {"vo2max": vo2max, "weight_trend": weight_trend}
 
 
 # -- Garmin token upload -------------------------------------------------------
@@ -1518,33 +1615,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
             }
         elif tool_name == "get_vo2max":
             days_back = max(1, min(tool_input.get("days", 30), 365))
-            results = []
-            for i in range(days_back - 1, -1, -1):
-                d = (date.today() - timedelta(days=i)).isoformat()
-                try:
-                    raw = g.get_max_metrics(d)
-                    for entry in raw if isinstance(raw, list) else []:
-                        generic = entry.get("generic") or {}
-                        vo2 = generic.get("vo2MaxValue")
-                        lt_hr = generic.get("lactateThresholdHeartRate")
-                        lt_speed = generic.get("lactateThresholdSpeed")
-                        if vo2 or lt_hr:
-                            results.append(
-                                {
-                                    "date": d,
-                                    "vo2max": round(vo2, 1) if vo2 else None,
-                                    "lactate_threshold_hr_bpm": lt_hr,
-                                    "lactate_threshold_pace_min_per_km": round(
-                                        1000 / lt_speed / 60, 2
-                                    )
-                                    if lt_speed
-                                    else None,
-                                }
-                            )
-                            break
-                except Exception:
-                    continue
-            return results
+            return _compute_vo2max(g, days_back)
         elif tool_name == "get_weight_trend":
             weeks = max(1, min(tool_input.get("weeks", 12), 52))
             return _compute_weight_trend(g, weeks)
