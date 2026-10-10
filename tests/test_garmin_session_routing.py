@@ -60,7 +60,7 @@ def test_compute_sleep_extracts_fields():
         }
     }
 
-    result = m._compute_sleep(g, offset_days=0)
+    result = m._compute_sleep(g, date.today(), offset_days=0)
 
     assert result["sleep_score"] == 85
     assert result["total_sleep_h"] == 7.5
@@ -78,7 +78,7 @@ def test_compute_sleep_offset_days_shifts_date():
     g = MagicMock()
     g.get_sleep_data.return_value = {"dailySleepDTO": {}}
 
-    result = m._compute_sleep(g, offset_days=2)
+    result = m._compute_sleep(g, date.today(), offset_days=2)
 
     expected = (date.today() - timedelta(days=2)).isoformat()
     assert result["date"] == expected
@@ -107,7 +107,7 @@ def test_compute_weight_trend_change_from_prev_week():
         ]
     }
 
-    trend = m._compute_weight_trend(g, weeks=2)
+    trend = m._compute_weight_trend(g, today, weeks=2)
 
     assert len(trend) == 2
     assert trend[0]["avg_weight_kg"] == 71.0  # older week
@@ -121,7 +121,7 @@ def test_compute_weight_trend_no_data_returns_empty():
     g = MagicMock()
     g.get_weigh_ins.return_value = {"dailyWeightSummaries": []}
 
-    assert m._compute_weight_trend(g, weeks=2) == []
+    assert m._compute_weight_trend(g, date.today(), weeks=2) == []
 
 
 # ── _execute_garmin_tool routing ────────────────────────────────────────────

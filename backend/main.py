@@ -143,14 +143,61 @@ async def admin_user(uid: str = Depends(current_user)) -> str:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def today_str() -> str:
-    return date.today().isoformat()
+def _user_tz(uid: str) -> ZoneInfo:
+    tz_name = get_profile(uid).get("timezone") or "Europe/London"
+    try:
+        return ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("Europe/London")
+
+
+def user_now(uid: str) -> datetime:
+    """Current wall-clock time in the user's own timezone, not server UTC —
+    Cloud Run runs in UTC, so date.today()/datetime.now() would put a user's
+    post-midnight-BST food log on the wrong day or an hour out in summer."""
+    return datetime.now(_user_tz(uid))
+
+
+def user_today(uid: str) -> date:
+    return user_now(uid).date()
+
+
+def today_str(uid: str) -> str:
+    return user_today(uid).isoformat()
+
+
+def _body_battery_peak(bb_entry: dict) -> float | None:
+    """Highest recorded body-battery level for the day, used as a stable
+    proxy for the level at wake time — body battery normally peaks
+    overnight and drains through the day, so readiness must not use
+    'current', which decays the score purely with time since waking (see
+    issue #21). Timestamps in the raw time series are large epoch-ms
+    numbers, so filtering to values in [0, 100] reliably picks out the
+    level regardless of the exact position/shape of each row."""
+    values = bb_entry.get("bodyBatteryValuesArray") or []
+    levels = [
+        v
+        for row in values
+        if isinstance(row, (list, tuple))
+        for v in row
+        if isinstance(v, (int, float)) and 0 <= v <= 100
+    ]
+    return max(levels) if levels else None
+
+
+def _body_battery_for_readiness(battery: dict) -> float | None:
+    """The body-battery value to feed into the readiness score: the
+    overnight peak (proxy for level-at-wake), falling back to the day's net
+    gain if no time series was available. Never 'current'."""
+    if battery.get("peak") is not None:
+        return battery["peak"]
+    return battery.get("charged")
 
 
 def _garmin_today(uid: str) -> dict[str, Any] | None:
     try:
         with GarminSession(uid) as g:
-            today = date.today().isoformat()
+            today = user_today(uid).isoformat()
             stats = g.get_stats(today)
             hr = g.get_heart_rates(today)
             bb = g.get_body_battery(today) or []
@@ -159,6 +206,7 @@ def _garmin_today(uid: str) -> dict[str, Any] | None:
                 battery = {
                     "charged": bb[0].get("charged"),
                     "drained": bb[0].get("drained"),
+                    "peak": _body_battery_peak(bb[0]),
                 }
             current_bb = stats.get("bodyBatteryMostRecentValue")
             if current_bb is not None:
@@ -178,41 +226,59 @@ def _garmin_today(uid: str) -> dict[str, Any] | None:
         return None
 
 
+def _activity_net_kcal(a: dict) -> tuple[int, bool]:
+    """Net (active-only) kcal for a Garmin activity, excluding the BMR
+    component Garmin bundles into the raw 'calories' field — see issue #22.
+    Falls back to gross kcal, flagged as estimated, if bmrCalories is
+    missing (e.g. activities synced from a third party)."""
+    gross = a.get("calories") or 0
+    bmr = a.get("bmrCalories")
+    if bmr is None:
+        return int(gross), True
+    return int(gross - bmr), False
+
+
 def _garmin_activities(uid: str) -> list[dict] | None:
     try:
         with GarminSession(uid) as g:
-            today = date.today().isoformat()
+            today = user_today(uid).isoformat()
             raw = g.get_activities(0, 20)
             from garmin_mcp import _dedup
 
             todays = [
                 a for a in _dedup(raw) if a.get("startTimeLocal", "")[:10] == today
             ]
-            return [
-                {
-                    "name": (a.get("activityName") or "")[:100],
-                    "type": a.get("activityType", {}).get("typeKey"),
-                    "duration_min": int(a.get("duration", 0) // 60),
-                    "distance_km": round(a.get("distance", 0) / 1000, 2),
-                    "kcal": a.get("calories", 0),
-                    "avg_power_w": a.get("avgPower"),
-                }
-                for a in todays
-            ]
+            result = []
+            for a in todays:
+                net_kcal, estimated = _activity_net_kcal(a)
+                result.append(
+                    {
+                        "name": (a.get("activityName") or "")[:100],
+                        "type": a.get("activityType", {}).get("typeKey"),
+                        "duration_min": int(a.get("duration", 0) // 60),
+                        "distance_km": round(a.get("distance", 0) / 1000, 2),
+                        "kcal": net_kcal,
+                        "kcal_estimated": estimated,
+                        "avg_power_w": a.get("avgPower"),
+                    }
+                )
+            return result
     except Exception as e:
         logger.warning(f"Garmin activities fetch failed: {e}")
         return None
 
 
-def _compute_sleep(g, offset_days: int = 0) -> dict[str, Any]:
+def _compute_sleep(g, today: date, offset_days: int = 0) -> dict[str, Any]:
     """Sleep data for a given night, using the caller's already-open Garmin session.
 
     Mirrors garmin_mcp.get_sleep's output shape, but takes the per-user client
     directly instead of going through that module's global singleton — which
     authenticates from a local token dir this container never populates.
+
+    `today` is the caller's user-local date (see user_today), not server UTC.
     """
     offset_days = max(0, min(offset_days, 365))
-    d = (date.today() - timedelta(days=offset_days)).isoformat()
+    d = (today - timedelta(days=offset_days)).isoformat()
     sleep = g.get_sleep_data(d)
     daily = sleep.get("dailySleepDTO", {})
     return {
@@ -229,12 +295,11 @@ def _compute_sleep(g, offset_days: int = 0) -> dict[str, Any]:
     }
 
 
-def _compute_weight_trend(g, weeks: int = 12) -> list[dict[str, Any]]:
+def _compute_weight_trend(g, today: date, weeks: int = 12) -> list[dict[str, Any]]:
     """Weekly weight/body-fat/muscle-mass averages, using the caller's already-open
     Garmin session (see _compute_sleep for why this can't go through garmin_mcp's
-    global client())."""
+    global client()). `today` is the caller's user-local date (see user_today)."""
     weeks = max(1, min(weeks, 52))
-    today = date.today()
     start = (today - timedelta(days=weeks * 7 + 7)).isoformat()
     data = g.get_weigh_ins(start, today.isoformat())
     by_date: dict[str, dict] = {}
@@ -282,12 +347,12 @@ def _compute_weight_trend(g, weeks: int = 12) -> list[dict[str, Any]]:
     return results
 
 
-def _compute_vo2max(g, days: int = 30) -> list[dict[str, Any]]:
+def _compute_vo2max(g, today: date, days: int = 30) -> list[dict[str, Any]]:
     """VO2max/lactate-threshold history, using the caller's already-open Garmin
     session (see _compute_weight_trend for why this can't go through
-    garmin_mcp's global client())."""
+    garmin_mcp's global client()). `today` is the caller's user-local date
+    (see user_today)."""
     days = max(1, min(days, 365))
-    today = date.today()
     results = []
     for i in range(days - 1, -1, -1):
         d = (today - timedelta(days=i)).isoformat()
@@ -357,7 +422,8 @@ def _garmin_wellness(uid: str) -> dict[str, Any]:
     result: dict[str, Any] = {}
     try:
         with GarminSession(uid) as g:
-            today = date.today().isoformat()
+            today_date = user_today(uid)
+            today = today_date.isoformat()
 
             # Last night's sleep
             try:
@@ -388,7 +454,7 @@ def _garmin_wellness(uid: str) -> dict[str, Any]:
 
             # Weight trend (this week vs last week)
             try:
-                trend = _compute_weight_trend(g, weeks=2)
+                trend = _compute_weight_trend(g, today_date, weeks=2)
                 if trend and len(trend) >= 2:
                     delta = trend[-1].get("avg_weight_kg", 0) - trend[0].get(
                         "avg_weight_kg", 0
@@ -415,11 +481,16 @@ def _garmin_wellness(uid: str) -> dict[str, Any]:
     return result
 
 
+# "Balanced" HRV status and "within baseline range" (the numeric fallback
+# below) are the same physiological state, so they must score the same —
+# see issue #21.
+_HRV_BALANCED_SCORE = 80.0
+
 # Garmin's documented HRV Status values. Used ahead of the baseline-range
 # fallback below since it's Garmin's own interpretation of the reading
 # (accounts for more than a simple range check), when available.
 _HRV_STATUS_SCORES = {
-    "BALANCED": 80.0,
+    "BALANCED": _HRV_BALANCED_SCORE,
     "UNBALANCED": 45.0,
     "LOW": 35.0,
 }
@@ -453,7 +524,7 @@ def _compute_readiness(wellness: dict[str, Any]) -> dict[str, Any] | None:
         elif hrv_val > baseline_high:
             components["hrv"] = 90.0
         else:
-            components["hrv"] = 75.0
+            components["hrv"] = _HRV_BALANCED_SCORE
 
     body_battery = wellness.get("body_battery_charged")
     if body_battery is not None:
@@ -626,7 +697,7 @@ async def log_food(req: FoodRequest, uid: str = Depends(current_user)):
     entry = {
         "id": str(uuid.uuid4()),
         "user_id": uid,
-        "date": today_str(),
+        "date": today_str(uid),
         "text": req.text.strip(),
         "parsed": parsed["parsed"],
         "kcal": int(parsed["kcal"]),
@@ -641,7 +712,7 @@ async def log_food(req: FoodRequest, uid: str = Depends(current_user)):
 
 @app.get("/food/today")
 def get_food_today(uid: str = Depends(current_user)):
-    entries = get_food_entries(uid, today_str())
+    entries = get_food_entries(uid, today_str(uid))
     cleaned = [
         {k: v for k, v in e.items() if k not in ("user_id", "date")} for e in entries
     ]
@@ -668,7 +739,7 @@ def log_activity(req: ActivityRequest, uid: str = Depends(current_user)):
     entry = {
         "id": str(uuid.uuid4()),
         "user_id": uid,
-        "date": today_str(),
+        "date": today_str(uid),
         "name": str(parsed.get("name", req.text.strip()))[:200],
         "kcal": max(0, int(parsed.get("kcal", 0))),
         "logged_at": datetime.now(timezone.utc).isoformat(),
@@ -692,7 +763,7 @@ async def unified_log(req: LogRequest, uid: str = Depends(current_user)):
         entry = {
             "id": entry_id,
             "user_id": uid,
-            "date": today_str(),
+            "date": today_str(uid),
             "name": str(parsed.get("name", req.text.strip()))[:200],
             "kcal": max(0, int(parsed.get("kcal", 0))),
             "logged_at": now,
@@ -711,7 +782,7 @@ async def unified_log(req: LogRequest, uid: str = Depends(current_user)):
         entry = {
             "id": entry_id,
             "user_id": uid,
-            "date": today_str(),
+            "date": today_str(uid),
             "text": req.text.strip(),
             "parsed": str(parsed.get("parsed", req.text.strip()))[:500],
             "kcal": max(0, int(parsed.get("kcal") or 0)),
@@ -760,8 +831,13 @@ def _aggregate_entries(entries: list) -> dict:
 
 
 async def _fetch_garmin_data(uid: str) -> tuple:
-    """Return (garmin, activities, wellness) with a 5-minute in-process cache."""
-    cached = _garmin_cache.get(uid)
+    """Return (garmin, activities, wellness) with a 5-minute in-process cache.
+
+    The cache key includes the user's own local date, not just uid, so a
+    result fetched before midnight (user-local) is never served after —
+    see issue #23."""
+    cache_key = f"{uid}:{today_str(uid)}"
+    cached = _garmin_cache.get(cache_key)
     if cached and time.time() - cached[0] < _GARMIN_TTL:
         return cached[1]
 
@@ -779,32 +855,55 @@ async def _fetch_garmin_data(uid: str) -> tuple:
         wellness = {}
 
     result = (garmin, activities, wellness)
-    _garmin_cache[uid] = (time.time(), result)
+    _garmin_cache[cache_key] = (time.time(), result)
     return result
 
 
+def _manual_activity_view(a: dict, possible_duplicate: bool = False) -> dict:
+    return {
+        "name": a["name"],
+        "type": "manual",
+        "duration_min": 0,
+        "distance_km": 0,
+        "kcal": a["kcal"],
+        "avg_power_w": None,
+        "id": a["id"],
+        "possible_duplicate": possible_duplicate,
+    }
+
+
+def _is_possible_duplicate(manual: dict, garmin_activities: list[dict] | None) -> bool:
+    """Best-effort flag for a manual entry that likely double-counts a Garmin
+    activity already synced for the same day — matched on the Garmin
+    activity's type or name appearing in the manual entry's free-text name
+    (see issue #22). Flagging rather than excluding keeps the call
+    reversible/visible; the balance still counts the manual entry."""
+    name = (manual.get("name") or "").lower()
+    if not name:
+        return False
+    for a in garmin_activities or []:
+        a_type = (a.get("type") or "").replace("_", " ").lower()
+        a_name = (a.get("name") or "").lower()
+        if a_type and a_type in name:
+            return True
+        if a_name and a_name in name:
+            return True
+    return False
+
+
 async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
-    target_date = for_date or today_str()
+    today_val = today_str(uid)
+    target_date = for_date or today_val
     entries = get_food_entries(uid, target_date)
     agg = _aggregate_entries(entries)
     profile = get_profile(uid)
     kcal_target = profile["kcal_target"]
 
-    manual = [
-        {
-            "name": a["name"],
-            "type": "manual",
-            "duration_min": 0,
-            "distance_km": 0,
-            "kcal": a["kcal"],
-            "avg_power_w": None,
-            "id": a["id"],
-        }
-        for a in get_manual_activities(uid, target_date)
-    ]
-
     # For past dates skip live Garmin data and AI recommendation
-    if target_date != today_str():
+    if target_date != today_val:
+        manual = [
+            _manual_activity_view(a) for a in get_manual_activities(uid, target_date)
+        ]
         kcal_burned = sum(a["kcal"] for a in manual)
         return {
             **agg,
@@ -821,20 +920,26 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
 
     garmin, activities, wellness = await _fetch_garmin_data(uid)
 
-    garmin_kcal = 0
-    if activities:
-        garmin_kcal = sum(a.get("kcal") or 0 for a in activities)
-    elif garmin:
-        garmin_kcal = garmin["active_kcal"]
+    manual = [
+        _manual_activity_view(a, _is_possible_duplicate(a, activities))
+        for a in get_manual_activities(uid, target_date)
+    ]
+
+    # Daily activeKilocalories already covers the active portion of any
+    # recorded activity plus the rest of the day's movement (steps etc).
+    # Summing each activity's gross 'calories' on top would double-count
+    # the BMR component baked into that gross figure — see issue #22.
+    garmin_kcal = garmin["active_kcal"] if garmin else 0
 
     manual_kcal = sum(a["kcal"] for a in manual)
     kcal_burned = garmin_kcal + manual_kcal
 
     if garmin and garmin.get("body_battery"):
         bb = garmin["body_battery"]
-        wellness["body_battery_charged"] = (
-            bb.get("current") if bb.get("current") is not None else bb.get("charged")
-        )
+        # Readiness uses the overnight peak (wake-time proxy), never the
+        # live 'current' value — see issue #21.
+        wellness["body_battery_charged"] = _body_battery_for_readiness(bb)
+        wellness["body_battery_now"] = bb.get("current")
 
     readiness = _compute_readiness(wellness or {})
 
@@ -852,7 +957,7 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
 
     all_activities = (activities or []) + manual
 
-    hour = datetime.now().hour
+    hour = user_now(uid).hour
     time_of_day = f"{hour:02d}:00"
 
     try:
@@ -964,12 +1069,11 @@ async def cycling_forecast(uid: str = Depends(current_user)):
     garmin, _activities, wellness = await _fetch_garmin_data(uid)
     if garmin and garmin.get("body_battery"):
         bb = garmin["body_battery"]
-        wellness["body_battery_charged"] = (
-            bb.get("current") if bb.get("current") is not None else bb.get("charged")
-        )
+        wellness["body_battery_charged"] = _body_battery_for_readiness(bb)
+        wellness["body_battery_now"] = bb.get("current")
     readiness = _compute_readiness(wellness or {})
 
-    today = today_str()
+    today = today_str(uid)
     days = weather.get("forecast", [])
     for day in days:
         day["is_today"] = day["date"] == today
@@ -993,9 +1097,10 @@ async def cycling_forecast(uid: str = Depends(current_user)):
 @app.get("/progression")
 async def progression(uid: str = Depends(current_user)):
     try:
+        today = user_today(uid)
         with GarminSession(uid) as g:
-            weight_trend = await run_in_threadpool(_compute_weight_trend, g, 12)
-            vo2max = await run_in_threadpool(_compute_vo2max, g, 90)
+            weight_trend = await run_in_threadpool(_compute_weight_trend, g, today, 12)
+            vo2max = await run_in_threadpool(_compute_vo2max, g, today, 90)
     except Exception as e:
         logger.warning(f"Progression fetch failed: {e}")
         return {"vo2max": [], "weight_trend": []}
@@ -1133,8 +1238,9 @@ def _current_hour_label(tz_name: str | None) -> str:
         except ZoneInfoNotFoundError:
             # No IANA tz data available at all (shouldn't happen — tzdata is
             # a pinned dependency — but this must never take down the whole
-            # nudge loop for every user over one bad lookup).
-            return datetime.now().strftime("%H:00")
+            # nudge loop for every user over one bad lookup). UTC rather than
+            # naive localtime, since Cloud Run's OS clock is UTC anyway.
+            return datetime.now(timezone.utc).strftime("%H:00")
     return datetime.now(tz).strftime("%H:00")
 
 
@@ -1159,7 +1265,7 @@ def _compute_weekly_summary(uid: str) -> dict[str, Any] | None:
     Fails silently (returns None) if Garmin is unavailable — the digest is
     skipped for that user rather than sent with garbage data."""
     try:
-        today = date.today()
+        today = user_today(uid)
         days = [(today - timedelta(days=i)).isoformat() for i in range(7)]
 
         kcal_in_total = 0
@@ -1178,7 +1284,7 @@ def _compute_weekly_summary(uid: str) -> dict[str, Any] | None:
             distance_km = round(sum(a.get("distance", 0) for a in week_acts) / 1000, 1)
             activity_kcal = sum(a.get("calories") or 0 for a in week_acts)
 
-            trend = _compute_weight_trend(g, weeks=2)
+            trend = _compute_weight_trend(g, today, weeks=2)
 
         result: dict[str, Any] = {
             "distance_km": distance_km,
@@ -1283,7 +1389,7 @@ try:
             from datetime import timedelta
 
             d = (
-                date.today() - timedelta(days=max(0, min(offset_days, 30)))
+                user_today(uid) - timedelta(days=max(0, min(offset_days, 30)))
             ).isoformat()
             data = g.get_heart_rates(d)
         return _analyse_heart_rates(data, d)
@@ -1539,7 +1645,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
 
     # DB-only tools — no Garmin session required
     if tool_name == "get_food_log":
-        target_date = tool_input.get("date") or date.today().isoformat()
+        target_date = tool_input.get("date") or today_str(uid)
         entries = get_food_entries(uid, target_date)
         total_kcal = sum(e["kcal"] for e in entries)
         total_protein = total_carbs = total_fat = 0
@@ -1571,9 +1677,10 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
         }
 
     with GarminSession(uid) as g:
-        d_today = date.today().isoformat()
+        today = user_today(uid)
+        d_today = today.isoformat()
         offset = tool_input.get("offset_days", 0)
-        d = (date.today() - timedelta(days=max(0, min(offset, 30)))).isoformat()
+        d = (today - timedelta(days=max(0, min(offset, 30)))).isoformat()
 
         if tool_name == "get_today_stats":
             return _garmin_today(uid) or {"error": "No data available"}
@@ -1581,7 +1688,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
             data = g.get_heart_rates(d)
             return gm._analyse_heart_rates(data, d)
         elif tool_name == "get_sleep":
-            return _compute_sleep(g, offset)
+            return _compute_sleep(g, today, offset)
         elif tool_name == "get_hrv":
             hrv_data = g.get_hrv_data(d_today)
             return hrv_data or {"error": "No HRV data"}
@@ -1615,10 +1722,10 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
             }
         elif tool_name == "get_vo2max":
             days_back = max(1, min(tool_input.get("days", 30), 365))
-            return _compute_vo2max(g, days_back)
+            return _compute_vo2max(g, today, days_back)
         elif tool_name == "get_weight_trend":
             weeks = max(1, min(tool_input.get("weeks", 12), 52))
-            return _compute_weight_trend(g, weeks)
+            return _compute_weight_trend(g, today, weeks)
         elif tool_name == "get_cycling_ftp":
             ftp_data = g.get_cycling_ftp()
             ftp = None
@@ -1628,7 +1735,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
                 ftp = ftp_data[0].get("functionalThresholdPower")
             result: dict[str, Any] = {"ftp_watts": int(ftp) if ftp else None}
             try:
-                start = (date.today() - timedelta(days=30)).isoformat()
+                start = (today - timedelta(days=30)).isoformat()
                 weight_data = g.get_weigh_ins(start, d_today)
                 summaries = weight_data.get("dailyWeightSummaries") or []
                 if summaries and ftp:
@@ -1749,7 +1856,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
                 },
             }
         elif tool_name == "compare_dual_recordings":
-            target = tool_input.get("date") or date.today().isoformat()
+            target = tool_input.get("date") or d_today
             raw = g.get_activities(0, 50)
             day_acts = [a for a in raw if a.get("startTimeLocal", "")[:10] == target]
             if len(day_acts) < 2:
@@ -1842,7 +1949,7 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
     if not req.message.strip():
         raise HTTPException(400, "message is required")
 
-    today = date.today().isoformat()
+    today = today_str(uid)
     system = (
         f"You are a personal health and fitness advisor for a cyclist. "
         f"Today is {today}. You have access to the user's Garmin data and food diary via tools. "

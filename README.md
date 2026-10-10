@@ -14,6 +14,25 @@ Log food in plain English, get a calorie balance against your activity, and ask 
 - **Push nudges** — scheduled notifications with time-aware advice (morning vs. evening)
 - **Multi-user** — each user has their own data, secured with Firebase Auth
 
+## How "balance" is calculated
+
+`balance = kcal_in - kcal_burned`, where:
+
+- `kcal_in` is the sum of logged food entries for the day.
+- `kcal_burned` is Garmin's daily **net active kcal** (`activeKilocalories` from
+  the day's stats) plus manually logged activities. `activeKilocalories`
+  already covers the active portion of any recorded workout plus the rest of
+  the day's movement (steps etc), so per-activity Garmin kcal is never added
+  on top — doing so would double the BMR Garmin bundles into an activity's
+  raw, gross `calories` figure. Per-activity kcal shown in the UI is net
+  (`calories - bmrCalories`), for display only.
+- `kcal_target` (set in your profile) is defined on the same net-active-kcal
+  basis, so it's directly comparable to `kcal_burned`.
+- A manually logged activity that looks like it duplicates a Garmin activity
+  already synced for the same day is flagged (`possible_duplicate`) rather
+  than excluded — it still counts towards `kcal_burned`, but the UI can warn
+  you about it.
+
 ## Using the app
 
 The hosted app is at **https://fuel.wlfdn.dev**

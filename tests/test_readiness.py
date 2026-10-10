@@ -3,6 +3,43 @@
 import backend.main as m
 
 
+# ── body battery: wake-time/peak extraction (issue #21) ─────────────────────
+
+
+def test_body_battery_peak_extracts_max_level_from_time_series():
+    entry = {
+        "bodyBatteryValuesArray": [
+            [1750000000000, "MEASURED", 55],
+            [1750000900000, "MEASURED", 82],
+            [1750001800000, "MEASURED", 40],
+        ]
+    }
+    assert m._body_battery_peak(entry) == 82
+
+
+def test_body_battery_peak_none_without_time_series():
+    assert m._body_battery_peak({}) is None
+    assert m._body_battery_peak({"bodyBatteryValuesArray": []}) is None
+
+
+def test_body_battery_for_readiness_prefers_peak_over_current():
+    # 'current' (30) is lower than the overnight peak (70) — readiness must
+    # use the peak, not the live value that decays through the day.
+    assert m._body_battery_for_readiness({"current": 30, "peak": 70, "charged": 50}) == 70
+
+
+def test_body_battery_for_readiness_falls_back_to_charged_without_peak():
+    assert m._body_battery_for_readiness({"current": 30, "charged": 50}) == 50
+
+
+def test_body_battery_for_readiness_distinguishes_equal_charged_different_wake():
+    # Two nights with the same 'charged' (net gain) but different wake
+    # levels must score differently.
+    night_a = m._body_battery_for_readiness({"charged": 40, "peak": 90})
+    night_b = m._body_battery_for_readiness({"charged": 40, "peak": 60})
+    assert night_a != night_b
+
+
 def test_no_data_returns_none():
     assert m._compute_readiness({}) is None
 
@@ -58,11 +95,14 @@ def test_hrv_above_baseline_scores_well():
     assert result["components"]["hrv"] == 90
 
 
-def test_hrv_within_baseline_scores_moderate():
-    result = m._compute_readiness(
+def test_hrv_within_baseline_scores_same_as_balanced_status():
+    # In-baseline numeric HRV and Garmin's own BALANCED status describe the
+    # same physiological state, so they must score the same (issue #21).
+    in_baseline = m._compute_readiness(
         {"hrv_last_night": 50, "hrv_baseline_low": 40, "hrv_baseline_high": 60}
     )
-    assert result["components"]["hrv"] == 75
+    balanced_status = m._compute_readiness({"hrv_status": "BALANCED"})
+    assert in_baseline["components"]["hrv"] == balanced_status["components"]["hrv"] == 80
 
 
 def test_missing_hrv_and_baseline_omits_hrv_component():
