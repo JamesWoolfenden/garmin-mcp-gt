@@ -127,6 +127,21 @@ function ReadinessBadge({ readiness }) {
   );
 }
 
+function CalibrationNote({ calibration }) {
+  if (!calibration || calibration.bias_kcal_per_day === 0) return null;
+  const { bias_kcal_per_day, window_days } = calibration;
+  const magnitude = Math.abs(bias_kcal_per_day);
+  const direction = bias_kcal_per_day > 0 ? "light" : "heavy";
+  return (
+    <p
+      className="calibration-note"
+      title={`Rough estimate from ${window_days} days of logs vs. your weigh-ins — not exact.`}
+    >
+      Your logs run ~{magnitude} kcal/day {direction} vs. your actual weight trend.
+    </p>
+  );
+}
+
 function PushToggle({ pushState, onSubscribe, onUnsubscribe }) {
   if (pushState === "unsupported") return null;
   if (pushState === "subscribed")
@@ -731,6 +746,7 @@ export default function App() {
               )}
               <Recommendation text={balance.recommendation} status={balance.status} />
               <ReadinessBadge readiness={balance.readiness} />
+              <CalibrationNote calibration={balance.calibration} />
               {balance.garmin_available === false && balance.status !== "historical" && (
                 <p style={{fontSize:"12px",color:"var(--muted)",textAlign:"center",margin:"4px 0 0"}}>
                   ⚠ Garmin disconnected — open Settings to reconnect

@@ -347,6 +347,63 @@ def _compute_weight_trend(g, today: date, weeks: int = 12) -> list[dict[str, Any
     return results
 
 
+_KCAL_PER_KG = 7700  # approximation — day-to-day water swings add noise, see below
+_CALIBRATION_WINDOW_DAYS = 28
+_CALIBRATION_MIN_LOGGED_DAYS = 21
+_CALIBRATION_MIN_WEIGH_INS = 8
+
+
+def _compute_calibration(
+    daily_balances: list[float],
+    weight_readings: list[tuple[int, float]],
+    window_days: int = _CALIBRATION_WINDOW_DAYS,
+    min_logged_days: int = _CALIBRATION_MIN_LOGGED_DAYS,
+    min_weigh_ins: int = _CALIBRATION_MIN_WEIGH_INS,
+) -> dict[str, Any] | None:
+    """Compare the weight change logging predicts against the weight change
+    that actually happened, to estimate a personal logging bias in
+    kcal/day (see issue #24) — food estimates have no error bars and are
+    probably off by ±20-30% per entry, so the raw daily balance alone
+    overstates its own precision.
+
+    `daily_balances` is one kcal_in - kcal_burned figure per *logged* day
+    in the window (a day with nothing logged is simply absent, not zero).
+    `weight_readings` is (day_offset, weight_kg) for individual weigh-ins,
+    day_offset counted from the start of the window (0) to its end
+    (window_days - 1).
+
+    Returns None below the minimum data threshold — with too little data,
+    noise (day-to-day water swings of ±0.5kg or more) dominates any
+    signal, so showing a number would overstate how certain it is.
+    """
+    logged_days = len(daily_balances)
+    weigh_ins = len(weight_readings)
+    if logged_days < min_logged_days or weigh_ins < min_weigh_ins:
+        return None
+
+    first_week = [w for offset, w in weight_readings if offset < 7]
+    last_week = [w for offset, w in weight_readings if offset >= window_days - 7]
+    if not first_week or not last_week:
+        return None
+
+    actual_change_kg = sum(last_week) / len(last_week) - sum(first_week) / len(
+        first_week
+    )
+    predicted_change_kg = sum(daily_balances) / _KCAL_PER_KG
+
+    bias = (actual_change_kg - predicted_change_kg) * _KCAL_PER_KG / window_days
+    # Rounded to the nearest 50: the window's own noise floor (~140 kcal/day
+    # from water-weight swings alone) is far coarser than exact kcal.
+    bias_rounded = round(bias / 50) * 50
+
+    return {
+        "bias_kcal_per_day": bias_rounded,
+        "window_days": window_days,
+        "logged_days": logged_days,
+        "weigh_ins": weigh_ins,
+    }
+
+
 def _compute_vo2max(g, today: date, days: int = 30) -> list[dict[str, Any]]:
     """VO2max/lactate-threshold history, using the caller's already-open Garmin
     session (see _compute_weight_trend for why this can't go through
@@ -859,6 +916,75 @@ async def _fetch_garmin_data(uid: str) -> tuple:
     return result
 
 
+# Calibration re-fetches up to _CALIBRATION_WINDOW_DAYS days of Garmin daily
+# stats, so it's cached for a day rather than the 5 minutes _garmin_cache
+# uses — the bias estimate doesn't need to be fresher than that.
+_calibration_cache: dict[str, tuple[float, dict | None]] = {}
+_CALIBRATION_TTL = 24 * 3600
+
+
+def _gather_calibration_inputs(
+    uid: str, g, today: date, window_days: int = _CALIBRATION_WINDOW_DAYS
+) -> tuple[list[float], list[tuple[int, float]]]:
+    """Assemble per-day logged balance and individual weigh-ins for the
+    calibration window, ending yesterday (today's day is still in
+    progress). Burn uses the same net-active-kcal basis as _compute_balance
+    (see issue #22)."""
+    daily_balances = []
+    for i in range(1, window_days + 1):
+        d_str = (today - timedelta(days=i)).isoformat()
+        kcal_in = _aggregate_entries(get_food_entries(uid, d_str))["kcal_in"]
+        if kcal_in <= 0:
+            continue  # nothing logged that day
+        manual_kcal = sum(a["kcal"] for a in get_manual_activities(uid, d_str))
+        try:
+            garmin_kcal = g.get_stats(d_str).get("activeKilocalories", 0)
+        except Exception:
+            continue
+        daily_balances.append(kcal_in - (garmin_kcal + manual_kcal))
+
+    window_start = today - timedelta(days=window_days)
+    weigh_ins: list[tuple[int, float]] = []
+    try:
+        data = g.get_weigh_ins(window_start.isoformat(), today.isoformat())
+        for s in data.get("dailyWeightSummaries") or []:
+            weight_g = (s.get("latestWeight") or {}).get("weight")
+            if not weight_g:
+                continue
+            try:
+                d = date.fromisoformat(s["summaryDate"])
+            except (KeyError, ValueError):
+                continue
+            offset = (d - window_start).days
+            if 0 <= offset < window_days:
+                weigh_ins.append((offset, weight_g / 1000))
+    except Exception:
+        pass
+
+    return daily_balances, weigh_ins
+
+
+async def _compute_calibration_cached(uid: str) -> dict | None:
+    today = user_today(uid)
+    cache_key = f"{uid}:{today.isoformat()}"
+    cached = _calibration_cache.get(cache_key)
+    if cached and time.time() - cached[0] < _CALIBRATION_TTL:
+        return cached[1]
+
+    def _fetch() -> dict | None:
+        try:
+            with GarminSession(uid) as g:
+                daily_balances, weigh_ins = _gather_calibration_inputs(uid, g, today)
+        except Exception as e:
+            logger.warning(f"Calibration fetch failed for {uid}: {e}")
+            return None
+        return _compute_calibration(daily_balances, weigh_ins)
+
+    result = await run_in_threadpool(_fetch)
+    _calibration_cache[cache_key] = (time.time(), result)
+    return result
+
+
 def _manual_activity_view(a: dict, possible_duplicate: bool = False) -> dict:
     return {
         "name": a["name"],
@@ -916,6 +1042,7 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
             "manual_activities": manual,
             "garmin_available": False,
             "readiness": None,
+            "calibration": None,
         }
 
     garmin, activities, wellness = await _fetch_garmin_data(uid)
@@ -978,6 +1105,8 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
             "recommendation": "Activity data unavailable — estimate based on food only.",
         }
 
+    calibration = await _compute_calibration_cached(uid)
+
     return {
         **agg,
         "kcal_burned": kcal_burned,
@@ -989,6 +1118,7 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
         "manual_activities": manual,
         "garmin_available": garmin is not None,
         "readiness": readiness,
+        "calibration": calibration,
     }
 
 
