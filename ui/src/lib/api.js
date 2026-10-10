@@ -45,3 +45,5 @@ export const sendChat = (message, history = []) => req("/chat", {
 export const getChatHistory = () => req("/chat/history");
 export const createGarminUploadToken = () => req("/garmin/upload-token", { method: "POST" });
 export const requestAccess = () => req("/access-request", { method: "POST" });
+export const getCyclingForecast = () => req("/cycling-forecast");
+export const getProgression = () => req("/progression");
