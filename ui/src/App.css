@@ -46,6 +46,7 @@ body { font-family: var(--font); color: var(--text); -webkit-font-smoothing: ant
 .readiness-dot.fatigued { background: var(--over); }
 .readiness-label { color: var(--text); font-weight: 500; }
 .readiness-score { color: var(--muted); }
+.calibration-note { font-size: 12px; color: var(--muted); text-align: center; margin: 4px 14px 0; }
 .log-form { display: flex; gap: 8px; padding: 16px 20px; position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--border); margin-top: auto; }
 .log-input { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; color: var(--text); font-size: 16px; font-family: var(--font); outline: none; transition: border-color 0.15s; min-width: 0; }
 .log-input:focus { border-color: var(--accent); }
