@@ -211,13 +211,17 @@ def _garmin_today(uid: str) -> dict[str, Any] | None:
             current_bb = stats.get("bodyBatteryMostRecentValue")
             if current_bb is not None:
                 battery["current"] = current_bb
+            # Garmin returns these fields as an explicit null, not a missing
+            # key, for a day that's only just started (e.g. moments after
+            # local midnight) — `.get(key, 0)` only substitutes 0 for a
+            # missing key, so `or 0` is needed to also catch the null.
             return {
                 "date": today,
-                "active_kcal": stats.get("activeKilocalories", 0),
-                "total_kcal": stats.get("totalKilocalories", 0),
-                "steps": stats.get("totalSteps", 0),
-                "distance_km": round(stats.get("totalDistanceMeters", 0) / 1000, 2),
-                "active_minutes": stats.get("activeSeconds", 0) // 60,
+                "active_kcal": stats.get("activeKilocalories") or 0,
+                "total_kcal": stats.get("totalKilocalories") or 0,
+                "steps": stats.get("totalSteps") or 0,
+                "distance_km": round((stats.get("totalDistanceMeters") or 0) / 1000, 2),
+                "active_minutes": (stats.get("activeSeconds") or 0) // 60,
                 "resting_hr_bpm": hr.get("restingHeartRate"),
                 "body_battery": battery,
             }
@@ -284,11 +288,14 @@ def _compute_sleep(g, today: date, offset_days: int = 0) -> dict[str, Any]:
     return {
         "date": d,
         "sleep_score": daily.get("sleepScores", {}).get("overall", {}).get("value"),
-        "total_sleep_h": round(daily.get("sleepTimeSeconds", 0) / 3600, 1),
-        "deep_min": daily.get("deepSleepSeconds", 0) // 60,
-        "rem_min": daily.get("remSleepSeconds", 0) // 60,
-        "light_min": daily.get("lightSleepSeconds", 0) // 60,
-        "awake_min": daily.get("awakeSleepSeconds", 0) // 60,
+        # Garmin returns these as an explicit null (not a missing key) for a
+        # night that hasn't happened yet (e.g. moments after local
+        # midnight) — `or 0` catches that; `.get(key, 0)` alone would not.
+        "total_sleep_h": round((daily.get("sleepTimeSeconds") or 0) / 3600, 1),
+        "deep_min": (daily.get("deepSleepSeconds") or 0) // 60,
+        "rem_min": (daily.get("remSleepSeconds") or 0) // 60,
+        "light_min": (daily.get("lightSleepSeconds") or 0) // 60,
+        "awake_min": (daily.get("awakeSleepSeconds") or 0) // 60,
         "avg_spo2_pct": daily.get("averageSpO2Value"),
         "avg_resting_hr_bpm": daily.get("averageRestingHeartRate"),
         "avg_stress": daily.get("averageStressLevel"),
