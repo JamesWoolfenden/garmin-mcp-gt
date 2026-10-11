@@ -48,6 +48,32 @@ jobs:
       - run: pip install fastapi uvicorn httpx pytest pytest-asyncio pydantic
       - run: python -m pytest
 
+  # test-python above runs against mocked mcp/garminconnect/etc (see
+  # tests/conftest.py) and lint-and-build resolves real deps from the
+  # committed uv.lock — neither exercises what backend/Dockerfile actually
+  # ships: a fresh, unpinned `pip install -r backend/requirements.txt`
+  # resolved against PyPI at build time. A wide version range there (e.g.
+  # Dependabot widening a major-version pin) can silently ship a breaking
+  # dependency straight to production without failing anything above this
+  # job. This mirrors the Dockerfile's install exactly and smoke-imports
+  # the real optional-dependency API surface main.py/garmin_mcp.py use.
+  test-docker-deps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - run: pip install --no-cache-dir -r backend/requirements.txt
+      - run: |
+          python -c "
+          from mcp.server.fastmcp import FastMCP
+          from garminconnect import Garmin
+          "
+
   test-frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -61,7 +87,7 @@ jobs:
       - run: cd ui && npm ci && npm test
 
   build-image:
-    needs: [lint-and-build, test-python, test-frontend]
+    needs: [lint-and-build, test-python, test-docker-deps, test-frontend]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -89,7 +115,7 @@ jobs:
           echo "image=$DIGEST" >> "$GITHUB_OUTPUT"
 
   tofu:
-    needs: [lint-and-build, test-python, test-frontend, build-image]
+    needs: [lint-and-build, test-python, test-docker-deps, test-frontend, build-image]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
@@ -126,7 +152,7 @@ jobs:
         working-directory: terraform
 
   deploy-frontend:
-    needs: [lint-and-build, test-python, test-frontend]
+    needs: [lint-and-build, test-python, test-docker-deps, test-frontend]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
