@@ -194,37 +194,44 @@ def _body_battery_for_readiness(battery: dict) -> float | None:
     return battery.get("charged")
 
 
+def _garmin_today_from_session(g, uid: str) -> dict[str, Any]:
+    """Core of _garmin_today, for a caller that already has an open Garmin
+    session (e.g. the chat tool loop, which reuses one session across calls
+    instead of logging in again per tool)."""
+    today = user_today(uid).isoformat()
+    stats = g.get_stats(today)
+    hr = g.get_heart_rates(today)
+    bb = g.get_body_battery(today) or []
+    battery = {}
+    if bb:
+        battery = {
+            "charged": bb[0].get("charged"),
+            "drained": bb[0].get("drained"),
+            "peak": _body_battery_peak(bb[0]),
+        }
+    current_bb = stats.get("bodyBatteryMostRecentValue")
+    if current_bb is not None:
+        battery["current"] = current_bb
+    # Garmin returns these fields as an explicit null, not a missing
+    # key, for a day that's only just started (e.g. moments after
+    # local midnight) — `.get(key, 0)` only substitutes 0 for a
+    # missing key, so `or 0` is needed to also catch the null.
+    return {
+        "date": today,
+        "active_kcal": stats.get("activeKilocalories") or 0,
+        "total_kcal": stats.get("totalKilocalories") or 0,
+        "steps": stats.get("totalSteps") or 0,
+        "distance_km": round((stats.get("totalDistanceMeters") or 0) / 1000, 2),
+        "active_minutes": (stats.get("activeSeconds") or 0) // 60,
+        "resting_hr_bpm": hr.get("restingHeartRate"),
+        "body_battery": battery,
+    }
+
+
 def _garmin_today(uid: str) -> dict[str, Any] | None:
     try:
         with GarminSession(uid) as g:
-            today = user_today(uid).isoformat()
-            stats = g.get_stats(today)
-            hr = g.get_heart_rates(today)
-            bb = g.get_body_battery(today) or []
-            battery = {}
-            if bb:
-                battery = {
-                    "charged": bb[0].get("charged"),
-                    "drained": bb[0].get("drained"),
-                    "peak": _body_battery_peak(bb[0]),
-                }
-            current_bb = stats.get("bodyBatteryMostRecentValue")
-            if current_bb is not None:
-                battery["current"] = current_bb
-            # Garmin returns these fields as an explicit null, not a missing
-            # key, for a day that's only just started (e.g. moments after
-            # local midnight) — `.get(key, 0)` only substitutes 0 for a
-            # missing key, so `or 0` is needed to also catch the null.
-            return {
-                "date": today,
-                "active_kcal": stats.get("activeKilocalories") or 0,
-                "total_kcal": stats.get("totalKilocalories") or 0,
-                "steps": stats.get("totalSteps") or 0,
-                "distance_km": round((stats.get("totalDistanceMeters") or 0) / 1000, 2),
-                "active_minutes": (stats.get("activeSeconds") or 0) // 60,
-                "resting_hr_bpm": hr.get("restingHeartRate"),
-                "body_battery": battery,
-            }
+            return _garmin_today_from_session(g, uid)
     except Exception as e:
         logger.warning(f"Garmin today fetch failed: {e}")
         return None
@@ -1778,8 +1785,10 @@ _GARMIN_TOOLS = [
 ]
 
 
-def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
-    """Execute a Garmin tool call using the user's stored tokens."""
+def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> Any:
+    """Execute a Garmin tool call. `client` is the caller's already-authenticated
+    Garmin session (None for DB-only tools), reused across every tool call in a
+    chat turn so each call doesn't pay its own login/token-refresh round trip."""
     import garmin_mcp as gm
     from datetime import timedelta
 
@@ -1816,257 +1825,257 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str) -> Any:
             },
         }
 
-    with GarminSession(uid) as g:
-        today = user_today(uid)
-        d_today = today.isoformat()
-        offset = tool_input.get("offset_days", 0)
-        d = (today - timedelta(days=max(0, min(offset, 30)))).isoformat()
+    g = client
+    today = user_today(uid)
+    d_today = today.isoformat()
+    offset = tool_input.get("offset_days", 0)
+    d = (today - timedelta(days=max(0, min(offset, 30)))).isoformat()
 
-        if tool_name == "get_today_stats":
-            return _garmin_today(uid) or {"error": "No data available"}
-        elif tool_name == "get_sedentary_analysis":
-            data = g.get_heart_rates(d)
-            return gm._analyse_heart_rates(data, d)
-        elif tool_name == "get_sleep":
-            return _compute_sleep(g, today, offset)
-        elif tool_name == "get_hrv":
-            hrv_data = g.get_hrv_data(d_today)
-            return hrv_data or {"error": "No HRV data"}
-        elif tool_name == "get_weekly_trends":
-            return {"note": "weekly trends"}
-        elif tool_name == "get_weight":
-            weight = g.get_weigh_ins(d_today, d_today)
-            return weight or {"error": "No weight data"}
-        elif tool_name == "get_weather":
-            from garmin_mcp import get_weather as _get_weather
+    if tool_name == "get_today_stats":
+        return _garmin_today_from_session(g, uid) or {"error": "No data available"}
+    elif tool_name == "get_sedentary_analysis":
+        data = g.get_heart_rates(d)
+        return gm._analyse_heart_rates(data, d)
+    elif tool_name == "get_sleep":
+        return _compute_sleep(g, today, offset)
+    elif tool_name == "get_hrv":
+        hrv_data = g.get_hrv_data(d_today)
+        return hrv_data or {"error": "No HRV data"}
+    elif tool_name == "get_weekly_trends":
+        return {"note": "weekly trends"}
+    elif tool_name == "get_weight":
+        weight = g.get_weigh_ins(d_today, d_today)
+        return weight or {"error": "No weight data"}
+    elif tool_name == "get_weather":
+        from garmin_mcp import get_weather as _get_weather
 
-            return _get_weather(
-                latitude=tool_input["latitude"],
-                longitude=tool_input["longitude"],
-                days=tool_input.get("days", 3),
-            )
-        elif tool_name == "get_activity_weather":
-            raw = g.get_activity_weather(tool_input["activity_id"])
-            if not raw:
-                return {"error": "No weather data for this activity"}
-            from garmin_mcp import _wind_dir
+        return _get_weather(
+            latitude=tool_input["latitude"],
+            longitude=tool_input["longitude"],
+            days=tool_input.get("days", 3),
+        )
+    elif tool_name == "get_activity_weather":
+        raw = g.get_activity_weather(tool_input["activity_id"])
+        if not raw:
+            return {"error": "No weather data for this activity"}
+        from garmin_mcp import _wind_dir
 
-            return {
-                "temp_c": raw.get("temperature"),
-                "feels_like_c": raw.get("apparentTemperature"),
-                "humidity_pct": raw.get("relativeHumidity"),
-                "wind_speed_kph": raw.get("windSpeed"),
-                "wind_direction": _wind_dir(raw.get("windDirection")),
-                "condition": raw.get("weatherTypePrimary"),
-                "precipitation_pct": raw.get("precipitationProbability"),
+        return {
+            "temp_c": raw.get("temperature"),
+            "feels_like_c": raw.get("apparentTemperature"),
+            "humidity_pct": raw.get("relativeHumidity"),
+            "wind_speed_kph": raw.get("windSpeed"),
+            "wind_direction": _wind_dir(raw.get("windDirection")),
+            "condition": raw.get("weatherTypePrimary"),
+            "precipitation_pct": raw.get("precipitationProbability"),
+        }
+    elif tool_name == "get_vo2max":
+        days_back = max(1, min(tool_input.get("days", 30), 365))
+        return _compute_vo2max(g, today, days_back)
+    elif tool_name == "get_weight_trend":
+        weeks = max(1, min(tool_input.get("weeks", 12), 52))
+        return _compute_weight_trend(g, today, weeks)
+    elif tool_name == "get_cycling_ftp":
+        ftp_data = g.get_cycling_ftp()
+        ftp = None
+        if isinstance(ftp_data, dict):
+            ftp = ftp_data.get("functionalThresholdPower")
+        elif isinstance(ftp_data, list) and ftp_data:
+            ftp = ftp_data[0].get("functionalThresholdPower")
+        result: dict[str, Any] = {"ftp_watts": int(ftp) if ftp else None}
+        try:
+            start = (today - timedelta(days=30)).isoformat()
+            weight_data = g.get_weigh_ins(start, d_today)
+            summaries = weight_data.get("dailyWeightSummaries") or []
+            if summaries and ftp:
+                latest = sorted(summaries, key=lambda x: x.get("summaryDate", ""))[
+                    -1
+                ]
+                weight_g = latest.get("latestWeight", {}).get("weight")
+                if weight_g:
+                    weight_kg = weight_g / 1000
+                    result["weight_kg"] = round(weight_kg, 2)
+                    result["w_per_kg"] = round(ftp / weight_kg, 2)
+        except Exception:
+            pass
+        return result
+    elif tool_name == "get_recent_activities":
+        limit = max(1, min(tool_input.get("limit", 10), 50))
+        from garmin_mcp import _dedup
+
+        raw = g.get_activities(0, limit * 2)
+        activities = _dedup(raw)[:limit]
+        return [
+            {
+                "activity_id": a.get("activityId"),
+                "date": a.get("startTimeLocal", "")[:10],
+                "name": (a.get("activityName") or "")[:100],
+                "type": a.get("activityType", {}).get("typeKey"),
+                "distance_km": round(a.get("distance", 0) / 1000, 2),
+                "duration_min": int(a.get("duration", 0) // 60),
+                "avg_hr_bpm": a.get("averageHR"),
+                "avg_power_w": a.get("avgPower"),
+                "elevation_gain_m": a.get("elevationGain"),
+                "calories": a.get("calories"),
             }
-        elif tool_name == "get_vo2max":
-            days_back = max(1, min(tool_input.get("days", 30), 365))
-            return _compute_vo2max(g, today, days_back)
-        elif tool_name == "get_weight_trend":
-            weeks = max(1, min(tool_input.get("weeks", 12), 52))
-            return _compute_weight_trend(g, today, weeks)
-        elif tool_name == "get_cycling_ftp":
-            ftp_data = g.get_cycling_ftp()
-            ftp = None
-            if isinstance(ftp_data, dict):
-                ftp = ftp_data.get("functionalThresholdPower")
-            elif isinstance(ftp_data, list) and ftp_data:
-                ftp = ftp_data[0].get("functionalThresholdPower")
-            result: dict[str, Any] = {"ftp_watts": int(ftp) if ftp else None}
-            try:
-                start = (today - timedelta(days=30)).isoformat()
-                weight_data = g.get_weigh_ins(start, d_today)
-                summaries = weight_data.get("dailyWeightSummaries") or []
-                if summaries and ftp:
-                    latest = sorted(summaries, key=lambda x: x.get("summaryDate", ""))[
-                        -1
-                    ]
-                    weight_g = latest.get("latestWeight", {}).get("weight")
-                    if weight_g:
-                        weight_kg = weight_g / 1000
-                        result["weight_kg"] = round(weight_kg, 2)
-                        result["w_per_kg"] = round(ftp / weight_kg, 2)
-            except Exception:
-                pass
-            return result
-        elif tool_name == "get_recent_activities":
-            limit = max(1, min(tool_input.get("limit", 10), 50))
-            from garmin_mcp import _dedup
+            for a in activities
+        ]
+    elif tool_name == "get_activity_fit":
+        from garminconnect import Garmin as _Garmin
+        from garmin_mcp import _parse_fit_zip
 
-            raw = g.get_activities(0, limit * 2)
-            activities = _dedup(raw)[:limit]
-            return [
-                {
-                    "activity_id": a.get("activityId"),
-                    "date": a.get("startTimeLocal", "")[:10],
-                    "name": (a.get("activityName") or "")[:100],
-                    "type": a.get("activityType", {}).get("typeKey"),
-                    "distance_km": round(a.get("distance", 0) / 1000, 2),
-                    "duration_min": int(a.get("duration", 0) // 60),
-                    "avg_hr_bpm": a.get("averageHR"),
-                    "avg_power_w": a.get("avgPower"),
-                    "elevation_gain_m": a.get("elevationGain"),
-                    "calories": a.get("calories"),
-                }
-                for a in activities
-            ]
-        elif tool_name == "get_activity_fit":
-            from garminconnect import Garmin as _Garmin
-            from garmin_mcp import _parse_fit_zip
-
-            zip_bytes = g.download_activity(
-                tool_input["activity_id"],
-                dl_fmt=_Garmin.ActivityDownloadFormat.ORIGINAL,
-            )
-            return _parse_fit_zip(zip_bytes)
-        elif tool_name == "get_activity_detail":
-            activity_id = str(tool_input.get("activity_id", ""))
-            detail = g.get_activity(activity_id)
-            summary = detail.get("summaryDTO", {})
-            hr_zones = g.get_activity_hr_in_timezones(activity_id)
-            power_zones = g.get_activity_power_in_timezones(activity_id)
+        zip_bytes = g.download_activity(
+            tool_input["activity_id"],
+            dl_fmt=_Garmin.ActivityDownloadFormat.ORIGINAL,
+        )
+        return _parse_fit_zip(zip_bytes)
+    elif tool_name == "get_activity_detail":
+        activity_id = str(tool_input.get("activity_id", ""))
+        detail = g.get_activity(activity_id)
+        summary = detail.get("summaryDTO", {})
+        hr_zones = g.get_activity_hr_in_timezones(activity_id)
+        power_zones = g.get_activity_power_in_timezones(activity_id)
+        return {
+            "activity_id": activity_id,
+            "avg_hr_bpm": summary.get("averageHR"),
+            "max_hr_bpm": summary.get("maxHR"),
+            "avg_power_w": summary.get("averagePower") or summary.get("avgPower"),
+            "max_power_w": summary.get("maxPower"),
+            "normalized_power_w": summary.get("normalizedPower")
+            or summary.get("normPower"),
+            "avg_cadence_rpm": summary.get("averageBikeCadence")
+            or summary.get("averageBikingCadenceInRevPerMinute"),
+            "elevation_gain_m": summary.get("elevationGain"),
+            "calories": summary.get("calories"),
+            "seated_vs_standing": {
+                "avg_seated_power_w": summary.get("averageSeatedPower"),
+                "avg_standing_power_w": summary.get("averageStandingPower"),
+                "seated_time_s": round(summary["seatedTime"])
+                if summary.get("seatedTime")
+                else None,
+                "standing_time_s": round(summary["standingTime"])
+                if summary.get("standingTime")
+                else None,
+                "standing_pct": round(
+                    summary["standingTime"]
+                    / (summary["seatedTime"] + summary["standingTime"])
+                    * 100,
+                    1,
+                )
+                if summary.get("seatedTime") and summary.get("standingTime")
+                else None,
+            }
+            if summary.get("averageSeatedPower")
+            else None,
+            "left_right_balance": {
+                "left_pct": summary.get("leftBalance"),
+                "right_pct": summary.get("rightBalance"),
+            }
+            if summary.get("leftBalance")
+            else None,
+            "power_phase_left": {
+                "start_deg": summary.get("leftPowerPhaseStart"),
+                "end_deg": summary.get("leftPowerPhaseEnd"),
+                "peak_start_deg": summary.get("leftPowerPhasePeakStart"),
+                "peak_end_deg": summary.get("leftPowerPhasePeakEnd"),
+                "platform_center_offset_mm": summary.get(
+                    "leftPlatformCenterOffset"
+                ),
+            }
+            if summary.get("leftPowerPhaseStart")
+            else None,
+            "power_phase_right": {
+                "start_deg": summary.get("rightPowerPhaseStart"),
+                "end_deg": summary.get("rightPowerPhaseEnd"),
+                "peak_start_deg": summary.get("rightPowerPhasePeakStart"),
+                "peak_end_deg": summary.get("rightPowerPhasePeakEnd"),
+                "platform_center_offset_mm": summary.get(
+                    "rightPlatformCenterOffset"
+                ),
+            }
+            if summary.get("rightPowerPhaseStart")
+            else None,
+            "hr_zones_minutes": {
+                f"zone_{z.get('zoneNumber')}": int(z.get("secsInZone", 0) // 60)
+                for z in (hr_zones or [])
+            },
+            "power_zones_minutes": {
+                f"zone_{z.get('zoneNumber')}": int(z.get("secsInZone", 0) // 60)
+                for z in (power_zones or [])
+            },
+        }
+    elif tool_name == "compare_dual_recordings":
+        target = tool_input.get("date") or d_today
+        raw = g.get_activities(0, 50)
+        day_acts = [a for a in raw if a.get("startTimeLocal", "")[:10] == target]
+        if len(day_acts) < 2:
             return {
-                "activity_id": activity_id,
+                "error": f"Fewer than 2 activities on {target} — no dual recording to compare"
+            }
+
+        def _slot(a: dict) -> int:
+            ts = a.get("startTimeLocal", "")
+            try:
+                return (int(ts[11:13]) * 60 + int(ts[14:16])) // 10
+            except (ValueError, IndexError):
+                return -1
+
+        from collections import defaultdict
+
+        slots: dict[int, list] = defaultdict(list)
+        for a in day_acts:
+            slots[_slot(a)].append(a)
+        pair = next((acts[:2] for acts in slots.values() if len(acts) >= 2), None)
+        if not pair:
+            return {"error": f"No overlapping recordings on {target}"}
+
+        def _metrics(a: dict) -> dict:
+            aid = str(a.get("activityId"))
+            detail = g.get_activity(aid)
+            summary = detail.get("summaryDTO", {})
+            hr_zones = g.get_activity_hr_in_timezones(aid)
+            return {
+                "activity_id": aid,
+                "type": a.get("activityType", {}).get("typeKey"),
+                "distance_km": round(a.get("distance", 0) / 1000, 2),
+                "duration_min": int(a.get("duration", 0) // 60),
                 "avg_hr_bpm": summary.get("averageHR"),
                 "max_hr_bpm": summary.get("maxHR"),
-                "avg_power_w": summary.get("averagePower") or summary.get("avgPower"),
-                "max_power_w": summary.get("maxPower"),
-                "normalized_power_w": summary.get("normalizedPower")
-                or summary.get("normPower"),
-                "avg_cadence_rpm": summary.get("averageBikeCadence")
-                or summary.get("averageBikingCadenceInRevPerMinute"),
-                "elevation_gain_m": summary.get("elevationGain"),
-                "calories": summary.get("calories"),
-                "seated_vs_standing": {
-                    "avg_seated_power_w": summary.get("averageSeatedPower"),
-                    "avg_standing_power_w": summary.get("averageStandingPower"),
-                    "seated_time_s": round(summary["seatedTime"])
-                    if summary.get("seatedTime")
-                    else None,
-                    "standing_time_s": round(summary["standingTime"])
-                    if summary.get("standingTime")
-                    else None,
-                    "standing_pct": round(
-                        summary["standingTime"]
-                        / (summary["seatedTime"] + summary["standingTime"])
-                        * 100,
-                        1,
-                    )
-                    if summary.get("seatedTime") and summary.get("standingTime")
-                    else None,
-                }
-                if summary.get("averageSeatedPower")
-                else None,
-                "left_right_balance": {
-                    "left_pct": summary.get("leftBalance"),
-                    "right_pct": summary.get("rightBalance"),
-                }
-                if summary.get("leftBalance")
-                else None,
-                "power_phase_left": {
-                    "start_deg": summary.get("leftPowerPhaseStart"),
-                    "end_deg": summary.get("leftPowerPhaseEnd"),
-                    "peak_start_deg": summary.get("leftPowerPhasePeakStart"),
-                    "peak_end_deg": summary.get("leftPowerPhasePeakEnd"),
-                    "platform_center_offset_mm": summary.get(
-                        "leftPlatformCenterOffset"
-                    ),
-                }
-                if summary.get("leftPowerPhaseStart")
-                else None,
-                "power_phase_right": {
-                    "start_deg": summary.get("rightPowerPhaseStart"),
-                    "end_deg": summary.get("rightPowerPhaseEnd"),
-                    "peak_start_deg": summary.get("rightPowerPhasePeakStart"),
-                    "peak_end_deg": summary.get("rightPowerPhasePeakEnd"),
-                    "platform_center_offset_mm": summary.get(
-                        "rightPlatformCenterOffset"
-                    ),
-                }
-                if summary.get("rightPowerPhaseStart")
-                else None,
+                "avg_power_w": summary.get("averagePower")
+                or summary.get("avgPower"),
                 "hr_zones_minutes": {
                     f"zone_{z.get('zoneNumber')}": int(z.get("secsInZone", 0) // 60)
                     for z in (hr_zones or [])
                 },
-                "power_zones_minutes": {
-                    f"zone_{z.get('zoneNumber')}": int(z.get("secsInZone", 0) // 60)
-                    for z in (power_zones or [])
-                },
             }
-        elif tool_name == "compare_dual_recordings":
-            target = tool_input.get("date") or d_today
-            raw = g.get_activities(0, 50)
-            day_acts = [a for a in raw if a.get("startTimeLocal", "")[:10] == target]
-            if len(day_acts) < 2:
-                return {
-                    "error": f"Fewer than 2 activities on {target} — no dual recording to compare"
-                }
 
-            def _slot(a: dict) -> int:
-                ts = a.get("startTimeLocal", "")
-                try:
-                    return (int(ts[11:13]) * 60 + int(ts[14:16])) // 10
-                except (ValueError, IndexError):
-                    return -1
+        ma, mb = _metrics(pair[0]), _metrics(pair[1])
 
-            from collections import defaultdict
+        def _diff(key: str):
+            va, vb = ma.get(key), mb.get(key)
+            return round(va - vb, 1) if va is not None and vb is not None else None
 
-            slots: dict[int, list] = defaultdict(list)
-            for a in day_acts:
-                slots[_slot(a)].append(a)
-            pair = next((acts[:2] for acts in slots.values() if len(acts) >= 2), None)
-            if not pair:
-                return {"error": f"No overlapping recordings on {target}"}
+        return {
+            "date": target,
+            "recording_a": ma,
+            "recording_b": mb,
+            "differences_a_minus_b": {
+                "avg_hr_bpm": _diff("avg_hr_bpm"),
+                "max_hr_bpm": _diff("max_hr_bpm"),
+                "avg_power_w": _diff("avg_power_w"),
+                "distance_km": _diff("distance_km"),
+            },
+            "interpretation": (
+                "Positive difference means recording_a reads higher. "
+                "avg_hr_bpm difference indicates optical vs chest-strap HR divergence."
+            ),
+        }
+    elif tool_name == "get_courses":
+        from garmin_mcp import get_courses as _get_courses
 
-            def _metrics(a: dict) -> dict:
-                aid = str(a.get("activityId"))
-                detail = g.get_activity(aid)
-                summary = detail.get("summaryDTO", {})
-                hr_zones = g.get_activity_hr_in_timezones(aid)
-                return {
-                    "activity_id": aid,
-                    "type": a.get("activityType", {}).get("typeKey"),
-                    "distance_km": round(a.get("distance", 0) / 1000, 2),
-                    "duration_min": int(a.get("duration", 0) // 60),
-                    "avg_hr_bpm": summary.get("averageHR"),
-                    "max_hr_bpm": summary.get("maxHR"),
-                    "avg_power_w": summary.get("averagePower")
-                    or summary.get("avgPower"),
-                    "hr_zones_minutes": {
-                        f"zone_{z.get('zoneNumber')}": int(z.get("secsInZone", 0) // 60)
-                        for z in (hr_zones or [])
-                    },
-                }
-
-            ma, mb = _metrics(pair[0]), _metrics(pair[1])
-
-            def _diff(key: str):
-                va, vb = ma.get(key), mb.get(key)
-                return round(va - vb, 1) if va is not None and vb is not None else None
-
-            return {
-                "date": target,
-                "recording_a": ma,
-                "recording_b": mb,
-                "differences_a_minus_b": {
-                    "avg_hr_bpm": _diff("avg_hr_bpm"),
-                    "max_hr_bpm": _diff("max_hr_bpm"),
-                    "avg_power_w": _diff("avg_power_w"),
-                    "distance_km": _diff("distance_km"),
-                },
-                "interpretation": (
-                    "Positive difference means recording_a reads higher. "
-                    "avg_hr_bpm difference indicates optical vs chest-strap HR divergence."
-                ),
-            }
-        elif tool_name == "get_courses":
-            from garmin_mcp import get_courses as _get_courses
-
-            return _get_courses(limit=tool_input.get("limit", 20))
-        else:
-            return {"error": f"Unknown tool: {tool_name}"}
+        return _get_courses(limit=tool_input.get("limit", 20))
+    else:
+        return {"error": f"Unknown tool: {tool_name}"}
 
 
 class ChatMessage(BaseModel):
@@ -2109,47 +2118,66 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
         messages.append({"role": role, "content": h.text})
     messages.append({"role": "user", "content": req.message})
 
-    # Agentic tool use loop
-    for _ in range(5):  # max 5 tool call rounds
-        response = await run_in_threadpool(
-            lambda: ANTHROPIC_CLIENT.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=1024,
-                system=system,
-                tools=_GARMIN_TOOLS,
-                messages=messages,
-            )
-        )
-
-        if response.stop_reason == "end_turn":
-            text = next((b.text for b in response.content if hasattr(b, "text")), "")
-            # Persist to encrypted chat history
-            await run_in_threadpool(save_chat_message, uid, "user", req.message)
-            await run_in_threadpool(save_chat_message, uid, "assistant", text)
-            return {"response": text}
-
-        if response.stop_reason != "tool_use":
-            break
-
-        # Execute tool calls
-        tool_results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                try:
-                    result = await run_in_threadpool(
-                        _execute_garmin_tool, block.name, block.input, uid
-                    )
-                except Exception as e:
-                    result = {"error": str(e)}
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(result),
-                    }
+    # Agentic tool use loop. One Garmin session is opened (lazily, on first
+    # need) and reused across every tool call in the turn, rather than each
+    # call logging in from scratch — that per-call login/token-refresh round
+    # trip was the main reason multi-tool questions (e.g. bike fit analysis)
+    # could run past Cloud Run's request timeout.
+    garmin_session: GarminSession | None = None
+    garmin_client = None
+    try:
+        for _ in range(5):  # max 5 tool call rounds
+            response = await run_in_threadpool(
+                lambda: ANTHROPIC_CLIENT.messages.create(
+                    model="claude-sonnet-4-5",
+                    max_tokens=1024,
+                    system=system,
+                    tools=_GARMIN_TOOLS,
+                    messages=messages,
                 )
+            )
 
-        messages.append({"role": "assistant", "content": response.content})
-        messages.append({"role": "user", "content": tool_results})
+            if response.stop_reason == "end_turn":
+                text = next((b.text for b in response.content if hasattr(b, "text")), "")
+                # Persist to encrypted chat history
+                await run_in_threadpool(save_chat_message, uid, "user", req.message)
+                await run_in_threadpool(save_chat_message, uid, "assistant", text)
+                return {"response": text}
 
-    return {"response": "Sorry, I couldn't complete that request."}
+            if response.stop_reason != "tool_use":
+                break
+
+            # Execute tool calls
+            tool_results = []
+            for block in response.content:
+                if block.type == "tool_use":
+                    try:
+                        if block.name != "get_food_log" and garmin_client is None:
+                            garmin_session = GarminSession(uid)
+                            garmin_client = await run_in_threadpool(
+                                garmin_session.__enter__
+                            )
+                        result = await run_in_threadpool(
+                            _execute_garmin_tool,
+                            block.name,
+                            block.input,
+                            uid,
+                            garmin_client,
+                        )
+                    except Exception as e:
+                        result = {"error": str(e)}
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps(result),
+                        }
+                    )
+
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": tool_results})
+
+        return {"response": "Sorry, I couldn't complete that request."}
+    finally:
+        if garmin_session is not None:
+            await run_in_threadpool(garmin_session.__exit__, None, None, None)
