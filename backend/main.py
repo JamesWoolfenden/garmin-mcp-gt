@@ -471,7 +471,10 @@ def claude_parse_log(text: str) -> dict[str, Any]:
         messages=[{"role": "user", "content": text}],
     )
     raw = msg.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    parsed = json.loads(raw)
+    if isinstance(parsed, list):
+        parsed = parsed[0] if parsed else {}
+    return parsed
 
 
 def claude_parse_food(text: str) -> dict[str, Any]:
