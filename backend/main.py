@@ -418,15 +418,27 @@ def _compute_calibration(
     }
 
 
+_VO2MAX_FETCH_WORKERS = 8
+
+
 def _compute_vo2max(g, today: date, days: int = 30) -> list[dict[str, Any]]:
     """VO2max/lactate-threshold history, using the caller's already-open Garmin
     session (see _compute_weight_trend for why this can't go through
     garmin_mcp's global client()). `today` is the caller's user-local date
-    (see user_today)."""
+    (see user_today).
+
+    get_max_metrics is a per-day Garmin API call with no bulk/range form in
+    the client library, so a 90-day window used to mean 90 sequential HTTP
+    round trips — the single biggest contributor to /progression's latency.
+    Firing them concurrently (bounded) cuts that to roughly
+    days / _VO2MAX_FETCH_WORKERS round trips' worth of wall-clock time.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     days = max(1, min(days, 365))
-    results = []
-    for i in range(days - 1, -1, -1):
-        d = (today - timedelta(days=i)).isoformat()
+    all_dates = [(today - timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
+
+    def _fetch_one(d: str) -> dict[str, Any] | None:
         try:
             raw = g.get_max_metrics(d)
             for entry in raw if isinstance(raw, list) else []:
@@ -435,22 +447,25 @@ def _compute_vo2max(g, today: date, days: int = 30) -> list[dict[str, Any]]:
                 lt_hr = generic.get("lactateThresholdHeartRate")
                 lt_speed = generic.get("lactateThresholdSpeed")
                 if vo2 or lt_hr:
-                    results.append(
-                        {
-                            "date": d,
-                            "vo2max": round(vo2, 1) if vo2 else None,
-                            "lactate_threshold_hr_bpm": lt_hr,
-                            "lactate_threshold_pace_min_per_km": round(
-                                1000 / lt_speed / 60, 2
-                            )
-                            if lt_speed
-                            else None,
-                        }
-                    )
-                    break
+                    return {
+                        "date": d,
+                        "vo2max": round(vo2, 1) if vo2 else None,
+                        "lactate_threshold_hr_bpm": lt_hr,
+                        "lactate_threshold_pace_min_per_km": round(
+                            1000 / lt_speed / 60, 2
+                        )
+                        if lt_speed
+                        else None,
+                    }
         except Exception:
-            continue
-    return results
+            pass
+        return None
+
+    with ThreadPoolExecutor(max_workers=_VO2MAX_FETCH_WORKERS) as pool:
+        # map() preserves input order in its output regardless of which
+        # future finishes first, so results stay oldest-to-newest.
+        fetched = list(pool.map(_fetch_one, all_dates))
+    return [r for r in fetched if r is not None]
 
 
 async def fetch_garmin(uid: str) -> dict[str, Any] | None:
