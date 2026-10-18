@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,18 +40,40 @@ def _decrypt(ciphertext: str) -> str:
 
 DB_PATH = os.environ.get("DB_PATH", "/data/fuel.db")
 
-_conn: sqlite3.Connection | None = None
+# FastAPI runs sync endpoint functions in a worker thread pool. A single
+# sqlite3.Connection shared across those threads (even with
+# check_same_thread=False) isn't safe for concurrent statement execution and
+# intermittently raises "bad parameter or other API misuse". Giving each
+# thread its own connection (safe under WAL) avoids that race.
+#
+# ":memory:" (used in tests) is exempt: each connection to it is its own
+# isolated database, so threads must share a single connection there instead.
+_local = threading.local()
+_shared_conn: sqlite3.Connection | None = None
+
+
+def _new_connection() -> sqlite3.Connection:
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    _init_schema(conn)
+    return conn
 
 
 def get_db() -> sqlite3.Connection:
-    global _conn
-    if _conn is None:
-        Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-        _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _conn.execute("PRAGMA journal_mode=WAL")
-        _init_schema(_conn)
-    return _conn
+    global _shared_conn
+    if DB_PATH == ":memory:":
+        if _shared_conn is None:
+            _shared_conn = _new_connection()
+        return _shared_conn
+
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        conn = _new_connection()
+        _local.conn = conn
+    return conn
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
