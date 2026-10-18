@@ -9,6 +9,7 @@ per-user client directly — these tests prove that, and would fail loudly
 again if either code path reverted to going through garmin_mcp.client().
 """
 
+import asyncio
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -133,11 +134,10 @@ def test_execute_garmin_tool_get_sleep_uses_per_user_session():
         "dailySleepDTO": {"sleepScores": {"overall": {"value": 77}}}
     }
 
-    with (
-        patch("backend.main.GarminSession", _FakeSession(fake_client)),
-        _no_global_client(),
-    ):
-        result = m._execute_garmin_tool("get_sleep", {"offset_days": 0}, "uid123")
+    with _no_global_client():
+        result = m._execute_garmin_tool(
+            "get_sleep", {"offset_days": 0}, "uid123", fake_client
+        )
 
     assert result["sleep_score"] == 77
     fake_client.get_sleep_data.assert_called_once()
@@ -147,11 +147,10 @@ def test_execute_garmin_tool_get_weight_trend_uses_per_user_session():
     fake_client = MagicMock()
     fake_client.get_weigh_ins.return_value = {"dailyWeightSummaries": []}
 
-    with (
-        patch("backend.main.GarminSession", _FakeSession(fake_client)),
-        _no_global_client(),
-    ):
-        result = m._execute_garmin_tool("get_weight_trend", {"weeks": 2}, "uid123")
+    with _no_global_client():
+        result = m._execute_garmin_tool(
+            "get_weight_trend", {"weeks": 2}, "uid123", fake_client
+        )
 
     assert result == []
     fake_client.get_weigh_ins.assert_called_once()
@@ -184,3 +183,74 @@ def test_garmin_wellness_weight_trend_uses_per_user_session():
 
     assert result["weight_trend_7d_kg"] == -1.0
     assert result["weight_kg"] == 70.0
+
+
+# ── /chat reuses one Garmin session across tool calls ───────────────────────
+
+
+class _CountingSession:
+    """Stand-in for GarminSession(uid) that counts how many times a session
+    is opened/closed, to prove /chat reuses one session across every tool
+    call in a turn instead of logging in again (with a fresh KMS decrypt +
+    Garmin login + re-encrypt) for each one."""
+
+    opens = 0
+    exits = 0
+
+    def __init__(self, uid):
+        pass
+
+    def __enter__(self):
+        _CountingSession.opens += 1
+        fake_client = MagicMock()
+        fake_client.get_stats.return_value = {}
+        fake_client.get_heart_rates.return_value = {}
+        fake_client.get_body_battery.return_value = []
+        fake_client.get_sleep_data.return_value = {"dailySleepDTO": {}}
+        return fake_client
+
+    def __exit__(self, *_exc):
+        _CountingSession.exits += 1
+        return False
+
+
+def _tool_use_block(name, tool_input, call_id):
+    block = MagicMock()
+    block.type = "tool_use"
+    block.name = name
+    block.input = tool_input
+    block.id = call_id
+    return block
+
+
+def test_chat_reuses_one_garmin_session_across_tool_calls():
+    _CountingSession.opens = 0
+    _CountingSession.exits = 0
+
+    tool_use_response = MagicMock()
+    tool_use_response.stop_reason = "tool_use"
+    tool_use_response.content = [
+        _tool_use_block("get_today_stats", {}, "call_1"),
+        _tool_use_block("get_sleep", {"offset_days": 0}, "call_2"),
+    ]
+
+    end_response = MagicMock()
+    end_response.stop_reason = "end_turn"
+    end_response.content = [MagicMock(text="All done")]
+
+    mock_anthropic = MagicMock()
+    mock_anthropic.messages.create.side_effect = [tool_use_response, end_response]
+
+    with (
+        patch("backend.main.ANTHROPIC_CLIENT", mock_anthropic),
+        patch("backend.main.GarminSession", _CountingSession),
+    ):
+        result = asyncio.run(
+            m.chat(m.ChatRequest(message="how am I doing today?"), "uid123")
+        )
+
+    assert result == {"response": "All done"}
+    # Two Garmin tool calls in the same turn should open exactly one
+    # session, not one per call.
+    assert _CountingSession.opens == 1
+    assert _CountingSession.exits == 1
