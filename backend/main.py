@@ -361,6 +361,43 @@ def _compute_weight_trend(g, today: date, weeks: int = 12) -> list[dict[str, Any
     return results
 
 
+# Garmin's cycling typeKeys aren't all spelled "*cycling*" — a standard road
+# ride is "road_biking", not "cycling" (see garmin_mcp.TYPE_PREF, which lists
+# "road_biking" separately for the same reason). A plain "cycling" substring
+# check would silently drop the single most common ride type.
+_CYCLING_TYPE_MARKERS = ("cycl", "bik", "bmx")
+
+
+def _is_cycling_activity(a: dict) -> bool:
+    type_key = (a.get("activityType", {}).get("typeKey") or "").lower()
+    return type_key == "virtual_ride" or any(
+        marker in type_key for marker in _CYCLING_TYPE_MARKERS
+    )
+
+
+def _recent_rides_from_session(g, limit: int = 5) -> list[dict[str, Any]]:
+    """Most recent cycling activities, for the Ride tab's activity list. Uses
+    the caller's already-open Garmin session (see _compute_weight_trend)."""
+    from garmin_mcp import _dedup
+
+    raw = g.get_activities(0, max(limit * 6, 30))
+    cycling = [a for a in _dedup(raw) if _is_cycling_activity(a)][:limit]
+    return [
+        {
+            "activity_id": a.get("activityId"),
+            "date": a.get("startTimeLocal", "")[:10],
+            "name": (a.get("activityName") or "")[:100],
+            "distance_km": round(a.get("distance", 0) / 1000, 2),
+            "duration_min": int(a.get("duration", 0) // 60),
+            "avg_power_w": a.get("avgPower"),
+            "avg_hr_bpm": a.get("averageHR"),
+            "elevation_gain_m": a.get("elevationGain"),
+            "calories": a.get("calories"),
+        }
+        for a in cycling
+    ]
+
+
 _KCAL_PER_KG = 7700  # approximation — day-to-day water swings add noise, see below
 _CALIBRATION_WINDOW_DAYS = 28
 _CALIBRATION_MIN_LOGGED_DAYS = 21
@@ -1253,7 +1290,7 @@ async def cycling_forecast(uid: str = Depends(current_user)):
     return {"days": days, "best_dates": best_dates}
 
 
-# -- Progression (VO2max + weight trend) --------------------------------------
+# -- Progression (VO2max + weight trend + recent rides) ----------------------
 
 
 @app.get("/progression")
@@ -1263,11 +1300,12 @@ async def progression(uid: str = Depends(current_user)):
         with GarminSession(uid) as g:
             weight_trend = await run_in_threadpool(_compute_weight_trend, g, today, 12)
             vo2max = await run_in_threadpool(_compute_vo2max, g, today, 90)
+            recent_rides = await run_in_threadpool(_recent_rides_from_session, g, 5)
     except Exception as e:
         logger.warning(f"Progression fetch failed: {e}")
-        return {"vo2max": [], "weight_trend": []}
+        return {"vo2max": [], "weight_trend": [], "recent_rides": []}
 
-    return {"vo2max": vo2max, "weight_trend": weight_trend}
+    return {"vo2max": vo2max, "weight_trend": weight_trend, "recent_rides": recent_rides}
 
 
 # -- Garmin token upload -------------------------------------------------------
