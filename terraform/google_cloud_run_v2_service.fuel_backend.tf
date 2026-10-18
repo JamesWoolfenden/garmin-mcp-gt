@@ -103,7 +103,9 @@ resource "google_cloud_run_v2_service" "fuel_backend" {
 
     }
 
-    timeout = "30s"
+    # /chat runs an agentic tool-use loop (up to 5 rounds, each a Claude call
+    # plus Garmin API calls) that can legitimately take well over 30s.
+    timeout = "120s"
   }
 
   lifecycle {
