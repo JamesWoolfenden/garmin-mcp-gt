@@ -546,6 +546,28 @@ function DayCard({ day, best }) {
   );
 }
 
+function RideRow({ ride }) {
+  return (
+    <div style={{
+      display:"flex",justifyContent:"space-between",alignItems:"center",
+      padding:"10px 0",borderBottom:"1px solid var(--border)",gap:"12px",
+    }}>
+      <div>
+        <p style={{fontSize:"13px",color:"var(--text)"}}>{ride.name || "Ride"}</p>
+        <p style={{fontSize:"11px",color:"var(--muted)"}}>{formatDate(ride.date)}</p>
+      </div>
+      <div style={{textAlign:"right",flexShrink:0}}>
+        <p style={{fontSize:"13px",color:"var(--text)"}}>
+          {ride.distance_km ? `${ride.distance_km}km` : "—"} · {ride.duration_min}min
+        </p>
+        <p style={{fontSize:"11px",color:"var(--muted)"}}>
+          {ride.avg_power_w ? `${Math.round(ride.avg_power_w)}W avg` : ride.avg_hr_bpm ? `${Math.round(ride.avg_hr_bpm)}bpm avg` : ""}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function CyclingProgress() {
   const [forecast, setForecast] = useState(null);
   const [forecastError, setForecastError] = useState(null);
@@ -582,8 +604,21 @@ function CyclingProgress() {
     ? [...progression.vo2max].reverse().find(d => d.vo2max != null)
     : null;
 
+  const recentRides = progression?.recent_rides || [];
+
   return (
     <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:"24px"}}>
+      <section>
+        <h2 style={{fontSize:"14px",color:"var(--muted)",marginBottom:"10px"}}>Recent rides</h2>
+        {recentRides.length ? (
+          <div>
+            {recentRides.map(r => <RideRow key={r.activity_id} ride={r} />)}
+          </div>
+        ) : (
+          <p style={{fontSize:"13px",color:"var(--muted)"}}>No recent rides found.</p>
+        )}
+      </section>
+
       <section>
         <h2 style={{fontSize:"14px",color:"var(--muted)",marginBottom:"10px"}}>Best days to ride this week</h2>
         {forecastError === "location_not_set" ? (
