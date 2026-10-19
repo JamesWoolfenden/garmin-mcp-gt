@@ -4,6 +4,7 @@ Exposes Garmin health and activity data as tools Claude can call.
 Run `garmin-setup` once to authenticate and save session tokens.
 """
 
+import math
 import os
 import stat
 from datetime import date, datetime, timedelta, timezone
@@ -1476,6 +1477,124 @@ def get_cycling_ftp() -> dict[str, Any]:
         pass
 
     return result
+
+
+def _training_load_series(
+    acts: list[dict], today: date, days: int, ftp: int | None, resting_hr: int | None
+) -> list[dict]:
+    """Pure computation: per-day load -> CTL/ATL/TSB (PMC) over the window. Shared by
+    get_training_load and the backend's per-user equivalent. `today` is the caller's
+    local date, not necessarily the server's (see _compute_vo2max in backend/main.py)."""
+    start = today - timedelta(days=days - 1)
+    daily_load: dict[str, float] = {
+        (start + timedelta(days=i)).isoformat(): 0.0 for i in range(days)
+    }
+
+    for a in acts:
+        type_key = a.get("activityType", {}).get("typeKey", "").lower()
+        if not ("cycling" in type_key or "biking" in type_key or "running" in type_key):
+            continue
+        d = a.get("startTimeLocal", "")[:10]
+        if d not in daily_load:
+            continue
+        duration_h = a.get("duration", 0) / 3600
+        avg_power = a.get("avgPower")
+        avg_hr = a.get("averageHR")
+        if avg_power and ftp:
+            intensity = avg_power / ftp
+            load = duration_h * intensity**2 * 100
+        elif avg_hr and resting_hr and avg_hr > resting_hr:
+            # HR-based fallback (TRIMP-lite) for activities with no power meter.
+            # Scaled so ~1.3x resting HR for an hour lands near 50, roughly matching
+            # the power-based formula's scale (threshold effort for an hour = 100).
+            intensity = (avg_hr - resting_hr) / resting_hr / 0.3
+            load = duration_h * intensity**2 * 50
+        else:
+            continue
+        daily_load[d] += load
+
+    ctl_k = 1 - math.exp(-1 / 42)
+    atl_k = 1 - math.exp(-1 / 7)
+    ctl = atl = 0.0
+    series = []
+    for d in sorted(daily_load):
+        load = daily_load[d]
+        ctl += (load - ctl) * ctl_k
+        atl += (load - atl) * atl_k
+        series.append(
+            {
+                "date": d,
+                "load": round(load, 1),
+                "ctl": round(ctl, 1),
+                "atl": round(atl, 1),
+                "tsb": round(ctl - atl, 1),
+            }
+        )
+    return series
+
+
+def _training_load_result(series: list[dict]) -> dict[str, Any]:
+    latest = series[-1]
+    tsb = latest["tsb"]
+    if tsb > 5:
+        interpretation = "Fresh — fitness is ahead of fatigue, a good window for a hard effort."
+    elif tsb < -10:
+        interpretation = "Carrying significant fatigue — consider an easy day or rest."
+    elif tsb < -5:
+        interpretation = "Slightly fatigued — fine for moderate training, maybe not an all-out effort."
+    else:
+        interpretation = "Fitness and fatigue are roughly balanced."
+
+    return {
+        "ctl_fitness": latest["ctl"],
+        "atl_fatigue": latest["atl"],
+        "tsb_form": tsb,
+        "interpretation": interpretation,
+        "daily": series[-14:],
+    }
+
+
+@mcp.tool()
+def get_training_load(days: int = 42) -> dict[str, Any]:
+    """Return training load trend: chronic fitness (CTL), acute fatigue (ATL), and form (TSB).
+
+    Estimates a per-day training load for each cycling/running activity from its duration
+    and intensity (average power relative to FTP when available, otherwise average HR
+    relative to resting HR), then runs the standard Performance Management Chart calc:
+    CTL = 42-day exponentially weighted load average ("fitness"),
+    ATL = 7-day exponentially weighted load average ("fatigue"),
+    TSB = CTL - ATL ("form" — positive means fresh, negative means carrying fatigue).
+
+    This is an estimate, not a precise TSS: it uses average power as a stand-in for
+    normalised power so it doesn't need to download every ride's FIT file. For a single
+    ride's exact TSS/IF, use get_activity_fit instead. Use this tool when asked about
+    overtraining, form, freshness, or whether today should be a hard or easy day.
+
+    Args:
+        days: Number of days of history to build the trend from (default 42, max 180).
+    """
+    days = max(14, min(days, 180))
+    today = date.today()
+    start = today - timedelta(days=days - 1)
+    c = client()
+
+    acts = _dedup(c.get_activities_by_date(start.isoformat(), today.isoformat()))
+
+    ftp_data = c.get_cycling_ftp()
+    ftp = None
+    if isinstance(ftp_data, dict):
+        ftp = ftp_data.get("functionalThresholdPower")
+    elif isinstance(ftp_data, list) and ftp_data:
+        ftp = ftp_data[0].get("functionalThresholdPower")
+
+    resting_hr = None
+    try:
+        resting_hr = c.get_stats(today.isoformat()).get("restingHeartRate")
+    except Exception:
+        pass
+
+    series = _training_load_series(acts, today, days, ftp, resting_hr)
+    return _training_load_result(series)
 
 
 @mcp.tool()

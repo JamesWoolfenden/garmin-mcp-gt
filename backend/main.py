@@ -505,6 +505,36 @@ def _compute_vo2max(g, today: date, days: int = 30) -> list[dict[str, Any]]:
     return [r for r in fetched if r is not None]
 
 
+def _compute_training_load(g, today: date, days: int = 42) -> dict[str, Any]:
+    """Training load trend (CTL/ATL/TSB) using the caller's already-open Garmin
+    session (see _compute_weight_trend for why this can't go through garmin_mcp's
+    global client()). `today` is the caller's user-local date (see user_today).
+    Shares its PMC math with garmin_mcp.get_training_load via
+    gm._training_load_series/_training_load_result.
+    """
+    import garmin_mcp as gm
+
+    days = max(14, min(days, 180))
+    start = today - timedelta(days=days - 1)
+    acts = gm._dedup(g.get_activities_by_date(start.isoformat(), today.isoformat()))
+
+    ftp_data = g.get_cycling_ftp()
+    ftp = None
+    if isinstance(ftp_data, dict):
+        ftp = ftp_data.get("functionalThresholdPower")
+    elif isinstance(ftp_data, list) and ftp_data:
+        ftp = ftp_data[0].get("functionalThresholdPower")
+
+    resting_hr = None
+    try:
+        resting_hr = g.get_stats(today.isoformat()).get("restingHeartRate")
+    except Exception:
+        pass
+
+    series = gm._training_load_series(acts, today, days, ftp, resting_hr)
+    return gm._training_load_result(series)
+
+
 async def fetch_garmin(uid: str) -> dict[str, Any] | None:
     return await run_in_threadpool(_garmin_today, uid)
 
@@ -1734,6 +1764,26 @@ _GARMIN_TOOLS = [
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
+        "name": "get_training_load",
+        "description": (
+            "Get the training load trend: chronic fitness (CTL), acute fatigue (ATL), and "
+            "form (TSB = CTL - ATL). Estimated from each ride/run's duration and intensity "
+            "(power vs FTP, or HR vs resting HR as a fallback) — not a precise TSS. "
+            "Use when asked about overtraining, form, freshness, or whether today should "
+            "be a hard or easy day."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Days of history to build the trend from (default 42, max 180)",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "get_recent_activities",
         "description": "Get recent cycling and running activities with distance, duration, HR, power, and elevation.",
         "input_schema": {
@@ -1928,6 +1978,9 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> 
     elif tool_name == "get_weight_trend":
         weeks = max(1, min(tool_input.get("weeks", 12), 52))
         return _compute_weight_trend(g, today, weeks)
+    elif tool_name == "get_training_load":
+        days_back = max(14, min(tool_input.get("days", 42), 180))
+        return _compute_training_load(g, today, days_back)
     elif tool_name == "get_cycling_ftp":
         ftp_data = g.get_cycling_ftp()
         ftp = None
@@ -2161,7 +2214,9 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
         f"always call get_food_log first to retrieve their logged food entries. "
         f"For bike fit analysis, call get_recent_activities to find cycling rides with power data, "
         f"then get_activity_detail on 3-5 of them to check cadence, left/right balance, "
-        f"power phase, and platform centre offset across multiple rides."
+        f"power phase, and platform centre offset across multiple rides. "
+        f"When the user asks about overtraining, form, freshness, or whether to ride hard "
+        f"or rest today, call get_training_load."
     )
 
     # Build messages with history (last 10 turns) for conversational context
