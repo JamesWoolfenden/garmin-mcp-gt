@@ -1328,9 +1328,15 @@ async def progression(uid: str = Depends(current_user)):
     try:
         today = user_today(uid)
         with GarminSession(uid) as g:
-            weight_trend = await run_in_threadpool(_compute_weight_trend, g, today, 12)
-            vo2max = await run_in_threadpool(_compute_vo2max, g, today, 90)
-            recent_rides = await run_in_threadpool(_recent_rides_from_session, g, 5)
+            # These are independent reads off the same session — _compute_vo2max
+            # already fans out 8-way internally (see _VO2MAX_FETCH_WORKERS), so
+            # running them concurrently rather than one after another just adds
+            # 2 more requests to that pool instead of adding their own wait on top.
+            weight_trend, vo2max, recent_rides = await asyncio.gather(
+                run_in_threadpool(_compute_weight_trend, g, today, 12),
+                run_in_threadpool(_compute_vo2max, g, today, 90),
+                run_in_threadpool(_recent_rides_from_session, g, 5),
+            )
     except Exception as e:
         logger.warning(f"Progression fetch failed: {e}")
         return {"vo2max": [], "weight_trend": [], "recent_rides": []}
