@@ -211,7 +211,8 @@ def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, A
 
     Returns current conditions and a daily forecast with cycling-relevant metrics:
     temperature, feels-like temperature, wind speed/direction, precipitation,
-    a 'rideable' flag, and rule-based clothing/kit advice for the conditions.
+    a 'rideable' flag, rule-based clothing/kit advice, and an hour-by-hour
+    breakdown for each day (temp, feels-like, wind, precipitation chance).
 
     Args:
         latitude: Location latitude (e.g. 51.45 for Reading, UK).
@@ -250,6 +251,15 @@ def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, A
                     "weather_code",
                 ]
             ),
+            "hourly": ",".join(
+                [
+                    "temperature_2m",
+                    "apparent_temperature",
+                    "precipitation_probability",
+                    "wind_speed_10m",
+                    "weather_code",
+                ]
+            ),
             "wind_speed_unit": "mph",
             "timezone": "auto",
             "forecast_days": days,
@@ -262,6 +272,23 @@ def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, A
 
     current = data.get("current", {})
     daily = data.get("daily", {})
+    hourly = data.get("hourly", {})
+
+    # Open-Meteo returns one flat hourly series for the whole window (e.g. 7 days
+    # of "2024-01-01T00:00" timestamps), not grouped by day — bucket by date so
+    # each forecast day can carry its own hour-by-hour breakdown.
+    hourly_by_date: dict[str, list[dict[str, Any]]] = {}
+    for i, ts in enumerate(hourly.get("time", [])):
+        hourly_by_date.setdefault(ts[:10], []).append(
+            {
+                "time": ts[11:16],
+                "temp_c": hourly["temperature_2m"][i],
+                "feels_like_c": hourly["apparent_temperature"][i],
+                "precipitation_chance_pct": hourly["precipitation_probability"][i],
+                "wind_mph": hourly["wind_speed_10m"][i],
+                "condition": _weather_code_desc(hourly["weather_code"][i]),
+            }
+        )
 
     forecast = []
     for i, d in enumerate(daily.get("time", [])):
@@ -288,6 +315,7 @@ def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, A
                 "clothing_advice": _clothing_advice(
                     feels_like_avg, wind_mph, precip_mm
                 ),
+                "hourly": hourly_by_date.get(d, []),
             }
         )
 

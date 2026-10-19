@@ -528,13 +528,16 @@ function Sparkline({ data, width = 280, height = 48, color = "var(--accent)" }) 
   );
 }
 
-function DayCard({ day, best }) {
+function DayCard({ day, best, onClick }) {
   return (
-    <div style={{
-      minWidth:"76px",padding:"10px 8px",borderRadius:"var(--radius)",textAlign:"center",flexShrink:0,
-      background: best ? "var(--ok-dim)" : "var(--surface)",
-      border: `1px solid ${best ? "var(--ok)" : "var(--border)"}`,
-    }}>
+    <div
+      onClick={onClick}
+      style={{
+        minWidth:"76px",padding:"10px 8px",borderRadius:"var(--radius)",textAlign:"center",flexShrink:0,
+        background: best ? "var(--ok-dim)" : "var(--surface)",
+        border: `1px solid ${best ? "var(--ok)" : "var(--border)"}`,
+        cursor: "pointer",
+      }}>
       <p style={{fontSize:"11px",color:"var(--muted)"}}>{formatDate(day.date)}</p>
       <p style={{fontSize:"20px",margin:"4px 0"}}>{day.rideable ? "🚴" : "🌧"}</p>
       <p style={{fontSize:"11px",color:"var(--text)"}}>{Math.round(day.temp_max_c)}°</p>
@@ -546,12 +549,63 @@ function DayCard({ day, best }) {
   );
 }
 
+function WeatherDetailModal({ day, onClose }) {
+  if (!day) return null;
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",
+        display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:50,
+      }}>
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background:"var(--surface)",borderTop:"1px solid var(--border)",
+          borderRadius:"var(--radius) var(--radius) 0 0",padding:"16px 20px",
+          width:"100%",maxWidth:"480px",maxHeight:"70vh",overflowY:"auto",
+        }}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
+          <h2 style={{fontSize:"15px",color:"var(--text)"}}>{formatDate(day.date)}</h2>
+          <button onClick={onClose} className="link-btn" style={{fontSize:"13px"}}>Close</button>
+        </div>
+        <p style={{fontSize:"12px",color:"var(--muted)",marginBottom:"10px"}}>
+          {day.condition} · {Math.round(day.temp_min_c)}°–{Math.round(day.temp_max_c)}° · {Math.round(day.max_wind_mph)}mph {day.wind_direction}
+        </p>
+        {day.hourly?.length ? (
+          <div>
+            {day.hourly.map(h => (
+              <div key={h.time} style={{
+                display:"flex",justifyContent:"space-between",alignItems:"center",
+                padding:"6px 0",borderBottom:"1px solid var(--border)",fontSize:"12px",gap:"10px",
+              }}>
+                <span style={{color:"var(--muted)",minWidth:"42px"}}>{h.time}</span>
+                <span style={{color:"var(--text)",flex:1}}>{h.condition}</span>
+                <span style={{color:"var(--text)"}}>{Math.round(h.temp_c)}°</span>
+                <span style={{color:"var(--muted)"}}>{Math.round(h.precipitation_chance_pct)}%💧</span>
+                <span style={{color:"var(--muted)"}}>{Math.round(h.wind_mph)}mph</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p style={{fontSize:"13px",color:"var(--muted)"}}>No hourly breakdown available.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RideRow({ ride }) {
   return (
-    <div style={{
-      display:"flex",justifyContent:"space-between",alignItems:"center",
-      padding:"10px 0",borderBottom:"1px solid var(--border)",gap:"12px",
-    }}>
+    <a
+      href={ride.activity_id ? `https://connect.garmin.com/modern/activity/${ride.activity_id}` : undefined}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{
+        display:"flex",justifyContent:"space-between",alignItems:"center",
+        padding:"10px 0",borderBottom:"1px solid var(--border)",gap:"12px",
+        textDecoration:"none",color:"inherit",
+      }}>
       <div>
         <p style={{fontSize:"13px",color:"var(--text)"}}>{ride.name || "Ride"}</p>
         <p style={{fontSize:"11px",color:"var(--muted)"}}>{formatDate(ride.date)}</p>
@@ -564,7 +618,7 @@ function RideRow({ ride }) {
           {ride.avg_power_w ? `${Math.round(ride.avg_power_w)}W avg` : ride.avg_hr_bpm ? `${Math.round(ride.avg_hr_bpm)}bpm avg` : ""}
         </p>
       </div>
-    </div>
+    </a>
   );
 }
 
@@ -573,6 +627,7 @@ function CyclingProgress() {
   const [forecastError, setForecastError] = useState(null);
   const [progression, setProgression] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selectedDay, setSelectedDay] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -630,11 +685,18 @@ function CyclingProgress() {
         ) : (
           <div style={{display:"flex",gap:"8px",overflowX:"auto",paddingBottom:"4px"}}>
             {forecast.days.map(d => (
-              <DayCard key={d.date} day={d} best={forecast.best_dates.includes(d.date)} />
+              <DayCard
+                key={d.date}
+                day={d}
+                best={forecast.best_dates.includes(d.date)}
+                onClick={() => setSelectedDay(d)}
+              />
             ))}
           </div>
         )}
       </section>
+
+      <WeatherDetailModal day={selectedDay} onClose={() => setSelectedDay(null)} />
 
       <section>
         <h2 style={{fontSize:"14px",color:"var(--muted)",marginBottom:"10px"}}>Fitness (VO2max)</h2>
