@@ -1565,7 +1565,9 @@ def _training_load_result(series: list[dict]) -> dict[str, Any]:
     latest = series[-1]
     tsb = latest["tsb"]
     if tsb > 5:
-        interpretation = "Fresh — fitness is ahead of fatigue, a good window for a hard effort."
+        interpretation = (
+            "Fresh — fitness is ahead of fatigue, a good window for a hard effort."
+        )
     elif tsb < -10:
         interpretation = "Carrying significant fatigue — consider an easy day or rest."
     elif tsb < -5:
