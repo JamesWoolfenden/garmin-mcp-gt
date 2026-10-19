@@ -81,6 +81,14 @@ def _fake_openmeteo_response():
             "wind_direction_10m_dominant": [270, 90],
             "weather_code": [61, 1],
         },
+        "hourly": {
+            "time": ["2026-01-01T00:00", "2026-01-01T12:00", "2026-01-02T00:00"],
+            "temperature_2m": [3.0, 9.0, 11.0],
+            "apparent_temperature": [1.0, 7.0, 9.0],
+            "precipitation_probability": [80, 60, 5],
+            "wind_speed_10m": [28.0, 22.0, 6.0],
+            "weather_code": [61, 61, 1],
+        },
     }
     resp = MagicMock()
     resp.read.return_value = json.dumps(payload).encode()
@@ -116,3 +124,17 @@ def test_get_weather_forecast_uses_average_feels_like():
     # feels_like_max=16.0, feels_like_min=8.0 -> average 12.0 ("cool" tier)
     assert any("cool" in a.lower() for a in day1["clothing_advice"])
     assert day1["rideable"] is True
+
+
+def test_get_weather_buckets_hourly_data_by_day():
+    with patch("urllib.request.urlopen", return_value=_fake_openmeteo_response()):
+        result = gm.get_weather(51.45, -0.97, days=2)
+
+    day0_hourly = result["forecast"][0]["hourly"]
+    assert [h["time"] for h in day0_hourly] == ["00:00", "12:00"]
+    assert day0_hourly[1]["temp_c"] == 9.0
+    assert day0_hourly[1]["precipitation_chance_pct"] == 60
+
+    day1_hourly = result["forecast"][1]["hourly"]
+    assert len(day1_hourly) == 1
+    assert day1_hourly[0]["wind_mph"] == 6.0
