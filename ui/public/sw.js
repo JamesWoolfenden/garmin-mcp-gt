@@ -1,9 +1,6 @@
 const CACHE_VERSION = "fuel-v2";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
-const API_CACHE = `${CACHE_VERSION}-api`;
-const ALL_CACHES = [STATIC_CACHE, API_CACHE];
-
-const API_HOST = "fuel-backend-430943803039.europe-west1.run.app";
+const ALL_CACHES = [STATIC_CACHE];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
@@ -26,22 +23,11 @@ self.addEventListener("fetch", (e) => {
 
   const url = new URL(request.url);
 
-  // Don't cache Firebase, Google, or other third-party requests
-  if (url.origin !== self.location.origin && url.hostname !== API_HOST) return;
-
-  if (url.hostname === API_HOST) {
-    // API: network-first, fall back to cache
-    e.respondWith(
-      fetch(request)
-        .then((res) => {
-          const clone = res.clone();
-          caches.open(API_CACHE).then((c) => c.put(request, clone));
-          return res;
-        })
-        .catch(() => caches.match(request))
-    );
-    return;
-  }
+  // Only handle our own origin. Cross-origin requests (the backend API,
+  // Firebase, Google) pass straight through: API responses are per-user and
+  // Cache Storage is keyed by URL alone, so caching them could show one
+  // user's data to the next person on a shared device.
+  if (url.origin !== self.location.origin) return;
 
   // Static assets with content hash in URL: cache-first
   if (url.pathname.startsWith("/assets/")) {
