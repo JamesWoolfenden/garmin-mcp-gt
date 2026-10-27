@@ -27,8 +27,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Backend source
 COPY backend/main.py backend/db.py backend/garmin_client.py \
      backend/litestream.yml ./
-# garmin_mcp.py from repo root (provides _dedup and MCP tools)
-COPY garmin_mcp.py ./
+# garmin_core.py from repo root (pure Garmin helpers shared with the stdio server)
+COPY garmin_core.py ./
 
 RUN chown -R app:app /app /data
 

@@ -30,9 +30,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --extra dev
-      - run: uv run ruff check garmin_mcp.py
-      - run: uv run ruff format --check garmin_mcp.py
+      - run: uv run ruff check garmin_mcp.py garmin_core.py
+      - run: uv run ruff format --check garmin_mcp.py garmin_core.py
       - run: uv build
+      - name: wheel ships garmin_core (garmin_mcp imports it)
+        run: python -c "import glob,zipfile; n=zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist(); assert 'garmin_core.py' in n, n"
       - run: uv run python -c "from garmin_mcp import main, _setup"
 
   test-python:

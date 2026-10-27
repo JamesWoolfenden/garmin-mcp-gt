@@ -295,7 +295,7 @@ def _garmin_activities(uid: str) -> list[dict] | None:
         with GarminSession(uid) as g:
             today = user_today(uid).isoformat()
             raw = g.get_activities(0, 20)
-            from garmin_mcp import _dedup
+            from garmin_core import _dedup
 
             todays = [
                 a for a in _dedup(raw) if a.get("startTimeLocal", "")[:10] == today
@@ -419,7 +419,7 @@ def _is_cycling_activity(a: dict) -> bool:
 def _recent_rides_from_session(g, limit: int = 5) -> list[dict[str, Any]]:
     """Most recent cycling activities, for the Ride tab's activity list. Uses
     the caller's already-open Garmin session (see _compute_weight_trend)."""
-    from garmin_mcp import _dedup
+    from garmin_core import _dedup
 
     raw = g.get_activities(0, max(limit * 6, 30))
     cycling = [a for a in _dedup(raw) if _is_cycling_activity(a)][:limit]
@@ -553,7 +553,7 @@ def _compute_training_load(g, today: date, days: int = 42) -> dict[str, Any]:
     Shares its PMC math with garmin_mcp.get_training_load via
     gm._training_load_series/_training_load_result.
     """
-    import garmin_mcp as gm
+    import garmin_core as gm
 
     days = max(14, min(days, 180))
     start = today - timedelta(days=days - 1)
@@ -1328,7 +1328,7 @@ async def cycling_forecast(uid: str = Depends(current_user)):
     if lat is None or lon is None:
         return {"error": "location_not_set"}
 
-    from garmin_mcp import get_weather as _get_weather
+    from garmin_core import get_weather as _get_weather
 
     try:
         weather = await run_in_threadpool(_get_weather, lat, lon, 7)
@@ -1555,7 +1555,7 @@ def _compute_weekly_summary(uid: str) -> dict[str, Any] | None:
             kcal_in_total += sum(a["kcal"] for a in get_manual_activities(uid, d))
 
         with GarminSession(uid) as g:
-            from garmin_mcp import _dedup
+            from garmin_core import _dedup
 
             cutoff = days[-1]
             raw = g.get_activities(0, 50)
@@ -1660,7 +1660,7 @@ try:
     from mcp.server.transport_security import TransportSecuritySettings
     from starlette.datastructures import Headers
     from starlette.responses import JSONResponse
-    from garmin_mcp import _analyse_heart_rates
+    from garmin_core import _analyse_heart_rates
 
     mcp = MCPServer("Garmin")
 
@@ -1998,7 +1998,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> 
     """Execute a Garmin tool call. `client` is the caller's already-authenticated
     Garmin session (None for DB-only tools), reused across every tool call in a
     chat turn so each call doesn't pay its own login/token-refresh round trip."""
-    import garmin_mcp as gm
+    import garmin_core as gm
     from datetime import timedelta
 
     # DB-only tools — no Garmin session required
@@ -2056,7 +2056,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> 
         weight = g.get_weigh_ins(d_today, d_today)
         return weight or {"error": "No weight data"}
     elif tool_name == "get_weather":
-        from garmin_mcp import get_weather as _get_weather
+        from garmin_core import get_weather as _get_weather
 
         return _get_weather(
             latitude=tool_input["latitude"],
@@ -2067,7 +2067,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> 
         raw = g.get_activity_weather(tool_input["activity_id"])
         if not raw:
             return {"error": "No weather data for this activity"}
-        from garmin_mcp import _wind_dir
+        from garmin_core import _wind_dir
 
         return {
             "temp_c": raw.get("temperature"),
@@ -2113,7 +2113,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> 
         return result
     elif tool_name == "get_recent_activities":
         limit = max(1, min(tool_input.get("limit", 10), 50))
-        from garmin_mcp import _dedup
+        from garmin_core import _dedup
 
         raw = g.get_activities(0, limit * 2)
         activities = _dedup(raw)[:limit]
@@ -2134,7 +2134,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> 
         ]
     elif tool_name == "get_activity_fit":
         from garminconnect import Garmin as _Garmin
-        from garmin_mcp import _parse_fit_zip
+        from garmin_core import _parse_fit_zip
 
         zip_bytes = g.download_activity(
             tool_input["activity_id"],
@@ -2283,9 +2283,10 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> 
             ),
         }
     elif tool_name == "get_courses":
-        from garmin_mcp import get_courses as _get_courses
+        from garmin_core import courses_from
 
-        return _get_courses(limit=tool_input.get("limit", 20))
+        # the caller's own session, not a process-global client
+        return courses_from(client, tool_input.get("limit", 20))
     else:
         return {"error": f"Unknown tool: {tool_name}"}
 

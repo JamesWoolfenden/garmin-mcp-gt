@@ -52,4 +52,4 @@ Homepage = "https://github.com/JamesWoolfenden/garmin-mcp-gt"
 Issues = "https://github.com/JamesWoolfenden/garmin-mcp-gt/issues"
 
 [tool.hatch.build.targets.wheel]
-include = ["garmin_mcp.py"]
+include = ["garmin_mcp.py", "garmin_core.py"]
