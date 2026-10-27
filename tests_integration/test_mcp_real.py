@@ -5,6 +5,7 @@ API break. This does, and mirrors how backend/main.py mounts the server.
 Run it on its own: `python -m pytest tests_integration`.
 """
 
+import asyncio
 import hashlib
 import os
 import sys
@@ -60,7 +61,8 @@ def _call(name, args=None):
 
 
 def test_stdio_tools_registered():
-    assert len(garmin_mcp.mcp._tool_manager.list_tools()) == 19
+    # public API (list_tools is async), not the private _tool_manager
+    assert len(asyncio.run(garmin_mcp.mcp.list_tools())) == 19
 
 
 def test_stdio_server_serves_and_surfaces_tool_error_text(tmp_path, monkeypatch):

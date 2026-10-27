@@ -47,7 +47,7 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.11"
-      - run: pip install fastapi uvicorn httpx pytest pytest-asyncio pydantic
+      - run: pip install fastapi uvicorn httpx pytest==9.1.1 pytest-asyncio==1.4.1 pydantic
       - run: python -m pytest
 
   # test-python above runs against mocked mcp/garminconnect/etc (see
@@ -75,7 +75,7 @@ jobs:
           from mcp.server.mcpserver import MCPServer
           from garminconnect import Garmin
           "
-      - run: pip install pytest
+      - run: pip install pytest==9.1.1
       - run: python -m pytest tests_integration -q -p no:cacheprovider
 
   test-frontend:

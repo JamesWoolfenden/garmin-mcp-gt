@@ -18,7 +18,7 @@ build-image:
 	docker build -t fuel-backend:local -f backend/Dockerfile .
 
 test-python:
-	pip install -q fastapi uvicorn httpx pytest pytest-asyncio pydantic
+	pip install -q fastapi uvicorn httpx pytest==9.1.1 pytest-asyncio==1.4.1 pydantic
 	python -m pytest
 	# real mcp library, run on its own: tests/ mocks mcp wholesale
 	pip install -q -r backend/requirements.txt
