@@ -239,6 +239,15 @@ def list_registered_users() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_registered_email(user_id: str) -> str | None:
+    row = (
+        get_db()
+        .execute("SELECT email FROM registered_users WHERE user_id=?", (user_id,))
+        .fetchone()
+    )
+    return row["email"] if row else None
+
+
 def delete_registered_user(user_id: str) -> None:
     get_db().execute("DELETE FROM registered_users WHERE user_id=?", (user_id,))
     get_db().commit()
@@ -282,6 +291,11 @@ def save_garmin_tokens(user_id: str, tokens_json: str) -> None:
         "INSERT OR REPLACE INTO garmin_tokens (user_id, tokens_json, updated_at) VALUES (?, ?, ?)",
         (user_id, _encrypt(tokens_json), datetime.now(timezone.utc).isoformat()),
     )
+    get_db().commit()
+
+
+def delete_garmin_tokens(user_id: str) -> None:
+    get_db().execute("DELETE FROM garmin_tokens WHERE user_id=?", (user_id,))
     get_db().commit()
 
 

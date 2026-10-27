@@ -26,6 +26,10 @@ for mod in [
 _fastmcp_mock = MagicMock()
 _fastmcp_mock.MCPServer.return_value.tool.return_value.side_effect = lambda fn: fn
 sys.modules.setdefault("mcp.server.mcpserver", _fastmcp_mock)
+_exc_mock = MagicMock()
+_exc_mock.ToolError = type("ToolError", (Exception,), {})
+sys.modules.setdefault("mcp.server.mcpserver.exceptions", _exc_mock)
+sys.modules.setdefault("mcp.server.transport_security", MagicMock())
 
 # Use in-memory SQLite for tests
 os.environ["DB_PATH"] = ":memory:"

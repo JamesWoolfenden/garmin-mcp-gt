@@ -14,6 +14,7 @@ from typing import Any
 
 from garminconnect import Garmin
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 # Resolve and normalise the token directory (expanduser handles ~, resolve normalises)
 _raw_token_dir = os.environ.get("GARMIN_TOKEN_DIR", str(Path.home() / ".garmin_tokens"))
@@ -29,7 +30,7 @@ def client() -> Garmin:
     if _client is None:
         token_path = Path(TOKEN_DIR)
         if not token_path.exists() or not any(token_path.iterdir()):
-            raise RuntimeError(
+            raise ToolError(
                 "No Garmin tokens found. Run `garmin-setup` to authenticate first."
             )
         try:
@@ -37,7 +38,7 @@ def client() -> Garmin:
             _client.login(TOKEN_DIR)
         except Exception as e:
             _client = None  # reset so next call retries after transient failure
-            raise RuntimeError(
+            raise ToolError(
                 "Failed to connect to Garmin Connect. "
                 "Try running `garmin-setup` again to refresh your tokens."
             ) from e
@@ -528,9 +529,7 @@ def get_activity_detail(activity_id: str) -> dict[str, Any]:
         if _id <= 0:
             raise ValueError
     except (ValueError, TypeError):
-        raise ValueError(
-            f"activity_id must be a positive integer, got: {activity_id!r}"
-        )
+        raise ToolError(f"activity_id must be a positive integer, got: {activity_id!r}")
 
     c = client()
     detail = c.get_activity(activity_id)
@@ -1007,9 +1006,7 @@ def get_ride_fatigue_analysis(activity_id: str) -> dict[str, Any]:
         if _id <= 0:
             raise ValueError
     except (ValueError, TypeError):
-        raise ValueError(
-            f"activity_id must be a positive integer, got: {activity_id!r}"
-        )
+        raise ToolError(f"activity_id must be a positive integer, got: {activity_id!r}")
 
     zip_bytes = client().download_activity(
         activity_id, dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL
@@ -1148,7 +1145,7 @@ def _parse_fit_zip(zip_bytes: bytes) -> dict[str, Any]:
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
         fit_name = next((n for n in z.namelist() if n.endswith(".fit")), None)
         if not fit_name:
-            raise ValueError("No .fit file found in download")
+            raise ToolError("No .fit file found in download")
         fit_bytes = z.read(fit_name)
 
     stream = Stream.from_bytes_io(io.BytesIO(fit_bytes))
@@ -1210,9 +1207,7 @@ def get_activity_fit(activity_id: str) -> dict[str, Any]:
         if _id <= 0:
             raise ValueError
     except (ValueError, TypeError):
-        raise ValueError(
-            f"activity_id must be a positive integer, got: {activity_id!r}"
-        )
+        raise ToolError(f"activity_id must be a positive integer, got: {activity_id!r}")
 
     zip_bytes = client().download_activity(
         activity_id, dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL

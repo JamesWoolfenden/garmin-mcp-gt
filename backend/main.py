@@ -45,6 +45,7 @@ from db import (
     delete_food_entry,
     delete_manual_activity,
     delete_push_subscription,
+    delete_garmin_tokens,
     delete_mcp_api_keys,
     delete_registered_user,
     get_all_subscribed_users,
@@ -52,6 +53,7 @@ from db import (
     get_manual_activities,
     get_profile,
     get_push_subscriptions,
+    get_registered_email,
     get_user_for_mcp_key,
     insert_food_entry,
     insert_manual_activity,
@@ -1420,6 +1422,10 @@ def admin_delete_user(target_uid: str, uid: str = Depends(admin_user)):
     except Exception as e:
         logger.warning(f"Could not disable Firebase user {target_uid}: {e}")
     delete_registered_user(target_uid)
+    # Revoke everything that outlives the profile: the /mcp key and the stored
+    # Garmin login would otherwise keep working for a removed user.
+    delete_mcp_api_keys(target_uid)
+    delete_garmin_tokens(target_uid)
     return {"ok": True, "uid": target_uid}
 
 
@@ -1592,28 +1598,77 @@ async def nudge(request: Request):
 # Generate a key via POST /garmin/mcp-key (requires Firebase auth).
 
 
-def _mcp_user(headers) -> str:
-    key = headers.get("X-MCP-Key", "").strip()
+def _mcp_uid(headers) -> str | None:
+    """Resolve an X-MCP-Key to the uid it belongs to, or None.
+
+    The owner must still be a registered user and still pass the
+    ALLOWED_EMAILS gate, so removing a user or their email cuts off /mcp too.
+    """
+    key = (headers.get("X-MCP-Key") or "").strip() if headers else ""
     if not key:
-        raise HTTPException(status_code=401, detail="X-MCP-Key header required")
-    key_hash = hashlib.sha256(key.encode()).hexdigest()
-    uid = get_user_for_mcp_key(key_hash)
+        return None
+    uid = get_user_for_mcp_key(hashlib.sha256(key.encode()).hexdigest())
     if not uid:
-        raise HTTPException(status_code=401, detail="Invalid MCP key")
+        return None
+    email = get_registered_email(uid)
+    if email is None or (_ALLOWED_EMAILS and email not in _ALLOWED_EMAILS):
+        return None
     return uid
 
 
 try:
     from mcp.server.mcpserver import Context, MCPServer
+    from mcp.server.mcpserver.exceptions import ToolError
     from mcp.server.transport_security import TransportSecuritySettings
+    from starlette.datastructures import Headers
+    from starlette.responses import JSONResponse
     from garmin_mcp import _analyse_heart_rates
 
     mcp = MCPServer("Garmin")
 
+    def _mcp_user(ctx: Context) -> str:
+        # The gate below already rejects bad keys before a session exists;
+        # this re-check is what hands the tool its uid, and it never falls
+        # back to a blank user. ToolError so the message reaches the client.
+        uid = _mcp_uid(ctx.headers)
+        if uid is None:
+            raise ToolError("Invalid or missing X-MCP-Key")
+        return uid
+
+    class _McpKeyGate:
+        """Reject /mcp requests without a valid key before MCP sees them.
+
+        Without this, initialize / tools/list / GET streams are open to
+        anyone and each one holds a session or stream on the one instance.
+        """
+
+        def __init__(self, inner):
+            self.inner = inner
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http" and _mcp_uid(Headers(scope=scope)) is None:
+                await JSONResponse(
+                    {"error": "Invalid or missing X-MCP-Key"}, status_code=401
+                )(scope, receive, send)
+                return
+            await self.inner(scope, receive, send)
+
+    class _McpExactPath:
+        """Serve /mcp itself: Mount only matches /mcp/ and redirects (to
+        http:// behind Cloud Run's proxy) otherwise."""
+
+        def __init__(self, inner):
+            self.inner = inner
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http" and scope["path"] == "/mcp":
+                scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
+            await self.inner(scope, receive, send)
+
     @mcp.tool()
     def get_today_stats(ctx: Context) -> dict:
         """Return today's step count, distance, calories, active time, and resting HR."""
-        uid = _mcp_user(ctx.headers) if ctx.headers else ""
+        uid = _mcp_user(ctx)
         result = _garmin_today(uid)
         if result is None:
             return {"error": "Garmin data unavailable"}
@@ -1622,7 +1677,7 @@ try:
     @mcp.tool()
     def get_sedentary_analysis(ctx: Context, offset_days: int = 0) -> dict:
         """Analyse how sedentary a day was based on heart rate patterns."""
-        uid = _mcp_user(ctx.headers) if ctx.headers else ""
+        uid = _mcp_user(ctx)
         with GarminSession(uid) as g:
             from datetime import timedelta
 
@@ -1637,11 +1692,13 @@ try:
     # per request by X-MCP-Key, so the allowlist would 421 every real request.
     _mcp_app = mcp.streamable_http_app(
         streamable_http_path="/",
+        stateless_http=True,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=False
         ),
     )
-    app.mount("/mcp", _mcp_app)
+    app.mount("/mcp", _McpKeyGate(_mcp_app))
+    app.add_middleware(_McpExactPath)
 
     # A mounted sub-app's lifespan never runs, and the MCP session manager
     # needs its task group started, so run it from the main app's lifespan.
