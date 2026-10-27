@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import { logEntry, deleteFood, deleteActivity, getBalance, sendChat, getChatHistory, createGarminUploadToken, createMcpKey, getProfile, updateProfile, requestAccess, getCyclingForecast, getProgression } from "./lib/api";
 import { usePush } from "./hooks/usePush";
+import { RIDE_TYPES, RIDE_LENGTHS, RATING_COLOR, formatWindow, inWindow, loadRidePrefs, saveRidePrefs } from "./lib/ride";
 import { useAuth } from "./hooks/useAuth";
 import { signInWithGoogle, signInWithEmail, registerWithEmail, signOutUser } from "./firebase";
 import "./App.css";
@@ -617,6 +618,11 @@ function DayCard({ day, best, onClick }) {
       <p style={{fontSize:"20px",margin:"4px 0"}}>{day.rideable ? "🚴" : "🌧"}</p>
       <p style={{fontSize:"11px",color:"var(--text)"}}>{Math.round(day.temp_max_c)}°</p>
       <p style={{fontSize:"10px",color:"var(--muted)"}}>{Math.round(day.max_wind_mph)}mph wind</p>
+      {day.best_window ? (
+        <p style={{fontSize:"10px",color: best ? "var(--ok)" : "var(--text)",marginTop:"2px"}}>{formatWindow(day.best_window)}</p>
+      ) : !day.rideable && day.hourly?.length >= 12 ? (
+        <p style={{fontSize:"10px",color:"var(--muted)",marginTop:"2px"}}>no window</p>
+      ) : null}
       {day.is_today && day.readiness && (
         <p style={{fontSize:"10px",color:"var(--accent)",marginTop:"2px"}}>{day.readiness.label}</p>
       )}
@@ -647,20 +653,39 @@ function WeatherDetailModal({ day, onClose }) {
         <p style={{fontSize:"12px",color:"var(--muted)",marginBottom:"10px"}}>
           {day.condition} · {Math.round(day.temp_min_c)}°–{Math.round(day.temp_max_c)}° · {Math.round(day.max_wind_mph)}mph {day.wind_direction}
         </p>
+        {day.ride_windows?.length ? (
+          <p style={{fontSize:"12px",color:"var(--ok)",marginBottom:"10px"}}>
+            Ride: {day.ride_windows.map(formatWindow).join(" or ")}
+          </p>
+        ) : day.hourly?.length >= 12 ? (
+          <p style={{fontSize:"12px",color:"var(--over)",marginBottom:"10px"}}>
+            No good window to ride today.
+          </p>
+        ) : null}
         {day.hourly?.length ? (
           <div>
-            {day.hourly.map(h => (
-              <div key={h.time} style={{
-                display:"flex",justifyContent:"space-between",alignItems:"center",
-                padding:"6px 0",borderBottom:"1px solid var(--border)",fontSize:"12px",gap:"10px",
-              }}>
-                <span style={{color:"var(--muted)",minWidth:"42px"}}>{h.time}</span>
-                <span style={{color:"var(--text)",flex:1}}>{h.condition}</span>
-                <span style={{color:"var(--text)"}}>{Math.round(h.temp_c)}°</span>
-                <span style={{color:"var(--muted)"}}>{Math.round(h.precipitation_chance_pct)}%💧</span>
-                <span style={{color:"var(--muted)"}}>{Math.round(h.wind_mph)}mph</span>
-              </div>
-            ))}
+            {day.hourly.map(h => {
+              const inBest = (day.ride_windows || []).some(w => inWindow(h.time, w));
+              return (
+                <div key={h.time} style={{
+                  display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"6px 4px",borderBottom:"1px solid var(--border)",fontSize:"12px",gap:"10px",
+                  background: inBest ? "var(--ok-dim)" : "transparent",
+                }}>
+                  <span title={h.ride_rating} style={{width:"8px",height:"8px",borderRadius:"50%",flexShrink:0,
+                    background: RATING_COLOR[h.ride_rating] || "var(--border)"}} />
+                  <span style={{color:"var(--muted)",minWidth:"42px"}}>{h.time}</span>
+                  <span style={{color:"var(--text)",flex:1}}>
+                    {h.condition}{h.surface_wet && !(h.precipitation_mm > 0) ? " · damp roads" : ""}
+                  </span>
+                  <span style={{color:"var(--text)"}}>{Math.round(h.temp_c)}°</span>
+                  <span style={{color:"var(--muted)"}}>
+                    {h.precipitation_mm > 0 ? `${h.precipitation_mm}mm` : `${Math.round(h.precipitation_chance_pct)}%💧`}
+                  </span>
+                  <span style={{color:"var(--muted)"}}>{Math.round(h.wind_mph)}mph</span>
+                </div>
+              );
+            })}
           </div>
         ) : (
           <p style={{fontSize:"13px",color:"var(--muted)"}}>No hourly breakdown available.</p>
@@ -697,27 +722,85 @@ function RideRow({ ride }) {
   );
 }
 
-function CyclingProgress() {
+// Wet road rides are worse than wet MTB rides, so the same forecast reads
+// differently by ride type. Saved per device.
+export function RidePrefs({ rideType, minHours, onChange }) {
+  const seg = (active) => `push-btn${active ? " active" : ""}`;
+  return (
+    <div style={{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center",marginBottom:"10px"}}>
+      <div role="group" aria-label="Ride type" style={{display:"flex",gap:"4px"}}>
+        {RIDE_TYPES.map(t => (
+          <button key={t.id} type="button" className={seg(rideType === t.id)}
+            aria-pressed={rideType === t.id}
+            onClick={() => onChange({ rideType: t.id, minHours })}>{t.label}</button>
+        ))}
+      </div>
+      <div role="group" aria-label="Ride length" style={{display:"flex",gap:"4px",alignItems:"center"}}>
+        <span style={{fontSize:"12px",color:"var(--muted)"}}>at least</span>
+        {RIDE_LENGTHS.map(h => (
+          <button key={h} type="button" className={seg(minHours === h)}
+            aria-pressed={minHours === h}
+            onClick={() => onChange({ rideType, minHours: h })}>{h}h</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function BestTimes({ windows, onPick }) {
+  if (!windows?.length) return null;
+  return (
+    <div style={{marginBottom:"12px"}}>
+      {windows.map(w => (
+        <button key={`${w.date}${w.start}`} type="button" onClick={() => onPick?.(w.date)}
+          className="link-btn"
+          style={{display:"flex",gap:"10px",width:"100%",textAlign:"left",padding:"6px 0",
+            borderBottom:"1px solid var(--border)",fontSize:"13px",alignItems:"baseline"}}>
+          <span style={{color:"var(--text)",minWidth:"84px"}}>{formatDate(w.date)}</span>
+          <span style={{color:"var(--ok)",fontWeight:600}}>{formatWindow(w)}</span>
+          <span style={{color:"var(--muted)",fontSize:"12px"}}>
+            {Math.round(w.avg_temp_c)}° · {Math.round(w.max_wind_mph)}mph · {w.total_precip_mm > 0 ? `${w.total_precip_mm}mm` : "dry"}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function CyclingProgress() {
   const [forecast, setForecast] = useState(null);
   const [forecastError, setForecastError] = useState(null);
   const [progression, setProgression] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState(null);
+  const [prefs, setPrefs] = useState(loadRidePrefs);
+
+  const changePrefs = (next) => {
+    setPrefs(next);
+    saveRidePrefs(next);
+  };
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      getCyclingForecast().catch(e => ({ error: e.message })),
-      getProgression().catch(() => ({ vo2max: [], weight_trend: [] })),
-    ]).then(([f, p]) => {
-      if (cancelled) return;
-      if (f.error) setForecastError(f.error);
-      else setForecast(f);
-      setProgression(p);
-      setLoading(false);
-    });
+    getProgression()
+      .catch(() => ({ vo2max: [], weight_trend: [] }))
+      .then(p => { if (!cancelled) setProgression(p); });
     return () => { cancelled = true; };
   }, []);
+
+  // Refetch when the ride type or length changes: the ratings depend on both.
+  useEffect(() => {
+    let cancelled = false;
+    getCyclingForecast(prefs.rideType, prefs.minHours)
+      .catch(e => ({ error: e.message }))
+      .then(f => {
+        if (cancelled) return;
+        if (f.error) { setForecastError(f.error); setForecast(null); }
+        else { setForecastError(null); setForecast(f); }
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [prefs.rideType, prefs.minHours]);
 
   if (loading) return <p className="empty">Loading…</p>;
 
@@ -750,7 +833,8 @@ function CyclingProgress() {
       </section>
 
       <section>
-        <h2 style={{fontSize:"14px",color:"var(--muted)",marginBottom:"10px"}}>Best days to ride this week</h2>
+        <h2 style={{fontSize:"14px",color:"var(--muted)",marginBottom:"10px"}}>Best times to ride this week</h2>
+        <RidePrefs rideType={prefs.rideType} minHours={prefs.minHours} onChange={changePrefs} />
         {forecastError === "location_not_set" ? (
           <p style={{fontSize:"13px",color:"var(--muted)"}}>
             Set your location in Settings to see a cycling forecast.
@@ -758,6 +842,14 @@ function CyclingProgress() {
         ) : forecastError || !forecast ? (
           <p style={{fontSize:"13px",color:"var(--muted)"}}>Couldn't load the forecast.</p>
         ) : (
+          <>
+          <BestTimes windows={forecast.best_windows}
+            onPick={date => setSelectedDay(forecast.days.find(d => d.date === date) || null)} />
+          {!forecast.best_windows?.length && (
+            <p style={{fontSize:"13px",color:"var(--muted)",marginBottom:"10px"}}>
+              No {prefs.minHours}h+ window this week for a {prefs.rideType} ride. Try a shorter ride or a different type.
+            </p>
+          )}
           <div style={{display:"flex",gap:"8px",overflowX:"auto",paddingBottom:"4px"}}>
             {forecast.days.map(d => (
               <DayCard
@@ -768,6 +860,7 @@ function CyclingProgress() {
               />
             ))}
           </div>
+          </>
         )}
       </section>
 

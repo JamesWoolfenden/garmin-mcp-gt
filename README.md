@@ -11,6 +11,7 @@ Log food in plain English, get a calorie balance against your activity, and ask 
 - **Food logging** — describe what you ate in plain English; Claude estimates calories and macros (protein, carbs, fat)
 - **Activity balance** — live calorie in vs. burned, updated from Garmin
 - **Conversational health advisor** — ask "how were my steps today?", "how did I sleep last night?", or "how much protein have I had today?" and get answers using your real data
+- **Ride planner** — the Ride tab finds the best *hours* to ride this week, not just the best days: a wet morning with a dry afternoon still gives you a window. Pick road, gravel or MTB (a wet road ride is much worse than a wet MTB ride, and roads stay damp for a few hours after rain) and how long you want to ride; only daylight hours that are dry and calm enough for that ride type count
 - **Push nudges** — scheduled notifications with time-aware advice (morning vs. evening)
 - **Multi-user** — each user has their own data, secured with Firebase Auth
 

@@ -48,5 +48,6 @@ export const getChatHistory = () => req("/chat/history");
 export const createGarminUploadToken = () => req("/garmin/upload-token", { method: "POST" });
 export const createMcpKey = () => req("/garmin/mcp-key", { method: "POST" });
 export const requestAccess = () => req("/access-request", { method: "POST" });
-export const getCyclingForecast = () => req("/cycling-forecast");
+export const getCyclingForecast = (rideType = "road", minHours = 2) =>
+  req(`/cycling-forecast?ride_type=${encodeURIComponent(rideType)}&min_hours=${minHours}`);
 export const getProgression = () => req("/progression");

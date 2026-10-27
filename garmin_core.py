@@ -138,18 +138,135 @@ def _clothing_advice(
     return advice
 
 
-def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, Any]:
+# Hour-by-hour ride planning. A day is only as good as the hours you can
+# actually ride in: a 6am downpour with a dry afternoon is a fine day, and a
+# "dry" day whose only dry hours are at 3am is not.
+RIDE_MIN_HOURS = 2
+_DAYLIGHT_FALLBACK = range(7, 21)  # local hours, used only if is_day is missing
+
+
+# What each kind of ride tolerates. A wet road ride is much worse than a wet
+# MTB ride (grip, spray, cold, and roads stay wet long after the rain stops),
+# so road is strict, gravel middling, and MTB shrugs off ordinary rain.
+# poor_* = not worth riding; ok_* = rideable but not ideal.
+RIDE_TYPES = {
+    "road": dict(
+        poor_mm=0.5, poor_chance=60, poor_wind=25, poor_gust=35,
+        ok_mm=0.1, ok_chance=30, ok_wind=18, ok_gust=28, damp_ok_mm=0.2,
+    ),
+    "gravel": dict(
+        poor_mm=1.0, poor_chance=75, poor_wind=28, poor_gust=38,
+        ok_mm=0.2, ok_chance=45, ok_wind=20, ok_gust=30, damp_ok_mm=1.0,
+    ),
+    "mtb": dict(
+        poor_mm=2.5, poor_chance=95, poor_wind=30, poor_gust=42,
+        ok_mm=0.5, ok_chance=60, ok_wind=22, ok_gust=32, damp_ok_mm=None,
+    ),
+}  # fmt: skip
+DAMP_LOOKBACK_HOURS = 3  # rain this recent still leaves the surface wet
+
+
+def _rate_hour(h: dict[str, Any], ride_type: str = "road") -> str:
+    """Rate one forecast hour for riding: "good", "ok" (rideable, not ideal) or
+    "poor" (night, too wet or windy for this ride type, or very cold/hot)."""
+    t = RIDE_TYPES.get(ride_type) or RIDE_TYPES["road"]
+    is_day = h.get("is_day")
+    if is_day is None:
+        is_day = int(h["time"][:2]) in _DAYLIGHT_FALLBACK
+    if not is_day:
+        return "poor"
+    mm = h.get("precipitation_mm") or 0
+    chance = h.get("precipitation_chance_pct") or 0
+    wind = h.get("wind_mph") or 0
+    gust = h.get("gust_mph") or wind
+    feels = h.get("feels_like_c")
+    if mm >= t["poor_mm"] or chance >= t["poor_chance"]:
+        return "poor"
+    if wind >= t["poor_wind"] or gust >= t["poor_gust"]:
+        return "poor"
+    if feels is not None and (feels < 2 or feels > 32):
+        return "poor"
+    damp = (h.get("recent_precip_mm") or 0) >= (t["damp_ok_mm"] or float("inf"))
+    if mm >= t["ok_mm"] or chance >= t["ok_chance"] or damp:
+        return "ok"
+    if wind >= t["ok_wind"] or gust >= t["ok_gust"]:
+        return "ok"
+    if feels is not None and (feels < 6 or feels > 28):
+        return "ok"
+    return "good"
+
+
+def _window_score(w: dict[str, Any]) -> float:
+    return w["good_hours"] + 0.4 * (w["hours"] - w["good_hours"])
+
+
+def ride_windows(
+    hours: list[dict[str, Any]], min_hours: int = RIDE_MIN_HOURS, limit: int = 2
+) -> list[dict[str, Any]]:
+    """Best consecutive runs of rideable hours (each hour needs a `ride_rating`),
+    at least `min_hours` long, best first. Longer and drier wins, but a short
+    perfect window beats a long marginal one."""
+    min_hours = max(1, min_hours)
+    runs: list[list[dict[str, Any]]] = []
+    cur: list[dict[str, Any]] = []
+    for h in [*hours, None]:
+        if h is not None and h["ride_rating"] != "poor":
+            cur.append(h)
+            continue
+        if len(cur) >= min_hours:
+            runs.append(cur)
+        cur = []
+    windows = []
+    for run in runs:
+        last = int(run[-1]["time"][:2]) + 1
+        windows.append(
+            {
+                "start": run[0]["time"],
+                "end": f"{last:02d}:00",
+                "hours": len(run),
+                "good_hours": sum(1 for h in run if h["ride_rating"] == "good"),
+                "avg_temp_c": round(sum(h["temp_c"] for h in run) / len(run), 1),
+                "max_wind_mph": max(h["wind_mph"] for h in run),
+                "max_precip_chance_pct": max(
+                    h["precipitation_chance_pct"] for h in run
+                ),
+                "total_precip_mm": round(
+                    sum(h.get("precipitation_mm") or 0 for h in run), 1
+                ),
+            }
+        )
+    for w in windows:
+        w["score"] = round(_window_score(w), 1)
+    windows.sort(key=lambda w: (-w["score"], w["total_precip_mm"], w["max_wind_mph"]))
+    return windows[:limit]
+
+
+def get_weather(
+    latitude: float,
+    longitude: float,
+    days: int = 3,
+    min_ride_hours: int = RIDE_MIN_HOURS,
+    ride_type: str = "road",
+) -> dict[str, Any]:
     """Get current weather and cycling forecast using OpenMeteo (free, no API key needed).
 
     Returns current conditions and a daily forecast with cycling-relevant metrics:
     temperature, feels-like temperature, wind speed/direction, precipitation,
-    a 'rideable' flag, rule-based clothing/kit advice, and an hour-by-hour
-    breakdown for each day (temp, feels-like, wind, precipitation chance).
+    rule-based clothing/kit advice, and an hour-by-hour breakdown for each day
+    (temp, feels-like, wind, gusts, rain, daylight, and a good/ok/poor ride
+    rating). Each day also lists its best ride windows (consecutive rideable
+    daylight hours), and 'rideable' means such a window exists: a wet morning
+    with a dry afternoon is rideable. How much rain and wind counts as rideable
+    depends on ride_type (road is strictest, MTB most tolerant), and a road
+    stays "damp" for a few hours after rain stops.
 
     Args:
         latitude: Location latitude (e.g. 51.45 for Reading, UK).
         longitude: Location longitude (e.g. -0.97 for Reading, UK).
         days: Forecast days (1-7, default 3).
+        min_ride_hours: Shortest ride window to look for, in hours (default 2).
+        ride_type: "road" (default), "gravel" or "mtb": sets how wet and windy
+            is still rideable. Wet road rides are much worse than wet MTB rides.
     """
     import json as _json
     import urllib.parse
@@ -190,6 +307,9 @@ def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, A
                     "precipitation_probability",
                     "wind_speed_10m",
                     "weather_code",
+                    "precipitation",
+                    "wind_gusts_10m",
+                    "is_day",
                 ]
             ),
             "wind_speed_unit": "mph",
@@ -219,8 +339,28 @@ def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, A
                 "precipitation_chance_pct": hourly["precipitation_probability"][i],
                 "wind_mph": hourly["wind_speed_10m"][i],
                 "condition": _weather_code_desc(hourly["weather_code"][i]),
+                # Optional series: absent in older/partial responses.
+                "precipitation_mm": _at(hourly, "precipitation", i),
+                "gust_mph": _at(hourly, "wind_gusts_10m", i),
+                "is_day": None
+                if _at(hourly, "is_day", i) is None
+                else bool(hourly["is_day"][i]),
             }
         )
+    # Rating needs the hours before it (rain last night wets this morning's
+    # road), so walk the whole series in time order, not day by day.
+    if ride_type not in RIDE_TYPES:
+        ride_type = "road"
+    recent: list[float] = []
+    for hrs in hourly_by_date.values():
+        for h in hrs:
+            h["recent_precip_mm"] = round(sum(recent[-DAMP_LOOKBACK_HOURS:]), 1)
+            h["surface_wet"] = h["recent_precip_mm"] >= 0.2
+            h["ride_rating"] = _rate_hour(h, ride_type)
+            recent.append(h.get("precipitation_mm") or 0)
+
+    # Hours already gone today can't be ridden: judge windows from "now".
+    now_hour = (current.get("time") or "")[:13]
 
     forecast = []
     for i, d in enumerate(daily.get("time", [])):
@@ -232,6 +372,16 @@ def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, A
         feels_like_avg = round((feels_like_max + feels_like_min) / 2, 1)
         wind_mph = daily["wind_speed_10m_max"][i]
         precip_mm = daily["precipitation_sum"][i]
+        day_hours = hourly_by_date.get(d, [])
+        # A full hourly series is needed to judge windows; with less (partial
+        # data) fall back to the old whole-day thresholds.
+        if len(day_hours) >= 12:
+            ridable_hours = [h for h in day_hours if f"{d}T{h['time'][:2]}" >= now_hour]
+            windows = ride_windows(ridable_hours, min_ride_hours)
+            rideable = bool(windows)
+        else:
+            windows = []
+            rideable = precip_mm < 2 and wind_mph < 25
         forecast.append(
             {
                 "date": d,
@@ -243,11 +393,13 @@ def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, A
                 "precipitation_mm": precip_mm,
                 "max_wind_mph": wind_mph,
                 "wind_direction": _wind_dir(daily["wind_direction_10m_dominant"][i]),
-                "rideable": precip_mm < 2 and wind_mph < 25,
+                "rideable": rideable,
+                "ride_windows": windows,
+                "best_window": windows[0] if windows else None,
                 "clothing_advice": _clothing_advice(
                     feels_like_avg, wind_mph, precip_mm
                 ),
-                "hourly": hourly_by_date.get(d, []),
+                "hourly": day_hours,
             }
         )
 
@@ -267,7 +419,14 @@ def get_weather(latitude: float, longitude: float, days: int = 3) -> dict[str, A
             ),
         },
         "forecast": forecast,
+        "ride_type": ride_type,
     }
+
+
+def _at(series: dict[str, Any], key: str, i: int) -> Any:
+    """series[key][i], or None if the series is missing/short."""
+    vals = series.get(key)
+    return vals[i] if vals is not None and i < len(vals) else None
 
 
 def _parse_fit_zip(zip_bytes: bytes) -> dict[str, Any]:

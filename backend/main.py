@@ -1322,7 +1322,19 @@ def update_profile(body: ProfileUpdate, uid: str = Depends(current_user)):
 
 
 @app.get("/cycling-forecast")
-async def cycling_forecast(uid: str = Depends(current_user)):
+async def cycling_forecast(
+    uid: str = Depends(current_user),
+    ride_type: str = "road",
+    min_hours: int = 2,
+):
+    """7-day forecast with the best hour-by-hour ride windows.
+
+    ride_type: road | gravel | mtb (how wet/windy is still rideable).
+    min_hours: shortest ride window to look for (1-6).
+    """
+    if ride_type not in ("road", "gravel", "mtb"):
+        raise HTTPException(400, "ride_type must be road, gravel or mtb")
+    min_hours = max(1, min(min_hours, 6))
     profile = get_profile(uid)
     lat, lon = profile.get("latitude"), profile.get("longitude")
     if lat is None or lon is None:
@@ -1331,7 +1343,9 @@ async def cycling_forecast(uid: str = Depends(current_user)):
     from garmin_core import get_weather as _get_weather
 
     try:
-        weather = await run_in_threadpool(_get_weather, lat, lon, 7)
+        weather = await run_in_threadpool(
+            _get_weather, lat, lon, 7, min_hours, ride_type
+        )
     except Exception as e:
         logger.warning(f"Weather fetch failed: {e}")
         return {"error": "weather_unavailable"}
@@ -1350,15 +1364,31 @@ async def cycling_forecast(uid: str = Depends(current_user)):
         if day["is_today"]:
             day["readiness"] = readiness
 
-    best_dates = [
-        d["date"]
-        for d in sorted(
-            (d for d in days if d.get("rideable")),
-            key=lambda d: (d["max_wind_mph"], d["precipitation_mm"]),
-        )
-    ][:3]
+    # Rank by the best ride window of each day (longer/drier first), not by
+    # whole-day totals: a day is only as good as the hours you can ride in.
+    # (Days judged on partial data have no window; they sort last.)
+    def _day_rank(d):
+        w = d.get("best_window")
+        return (-(w["score"] if w else 0), d["max_wind_mph"], d["precipitation_mm"])
 
-    return {"days": days, "best_dates": best_dates}
+    ranked = sorted((d for d in days if d.get("rideable")), key=_day_rank)
+    best_dates = [d["date"] for d in ranked][:3]
+    best_windows = sorted(
+        (
+            {"date": d["date"], **w}
+            for d in days
+            for w in d.get("ride_windows", [])
+        ),
+        key=lambda w: (-w["score"], w["total_precip_mm"], w["date"], w["start"]),
+    )[:3]
+
+    return {
+        "days": days,
+        "best_dates": best_dates,
+        "best_windows": best_windows,
+        "ride_type": ride_type,
+        "min_hours": min_hours,
+    }
 
 
 # -- Progression (VO2max + weight trend + recent rides) ----------------------
@@ -1800,8 +1830,11 @@ _GARMIN_TOOLS = [
         "name": "get_weather",
         "description": (
             "Get current weather and cycling forecast for a location using OpenMeteo. "
-            "Returns temperature, wind speed/direction, precipitation, and a rideable flag per day. "
-            "Use when the user asks about weather, whether to ride, or to correlate past performance with conditions."
+            "Returns temperature, wind speed/direction and precipitation per day and per hour, "
+            "plus the best ride windows (consecutive rideable daylight hours) for each day. "
+            "A day is rideable if it has such a window, so a wet morning with a dry afternoon counts. "
+            "Wet road rides are much worse than wet MTB rides: pass ride_type to match the ride. "
+            "Use when the user asks about weather, whether or when to ride, or to correlate past performance with conditions."
         ),
         "input_schema": {
             "type": "object",
@@ -1817,6 +1850,15 @@ _GARMIN_TOOLS = [
                 "days": {
                     "type": "integer",
                     "description": "Forecast days 1-7 (default 3)",
+                },
+                "ride_type": {
+                    "type": "string",
+                    "enum": ["road", "gravel", "mtb"],
+                    "description": "Kind of ride (default road). Road is strictest about rain, damp roads and wind; mtb is most tolerant.",
+                },
+                "min_ride_hours": {
+                    "type": "integer",
+                    "description": "Shortest ride window to look for, in hours (default 2)",
                 },
             },
             "required": ["latitude", "longitude"],
@@ -2062,6 +2104,8 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> 
             latitude=tool_input["latitude"],
             longitude=tool_input["longitude"],
             days=tool_input.get("days", 3),
+            min_ride_hours=tool_input.get("min_ride_hours", 2),
+            ride_type=tool_input.get("ride_type", "road"),
         )
     elif tool_name == "get_activity_weather":
         raw = g.get_activity_weather(tool_input["activity_id"])
