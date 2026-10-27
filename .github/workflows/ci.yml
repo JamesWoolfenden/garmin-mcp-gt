@@ -70,9 +70,11 @@ jobs:
       - run: pip install --no-cache-dir -r backend/requirements.txt
       - run: |
           python -c "
-          from mcp.server.fastmcp import FastMCP
+          from mcp.server.mcpserver import MCPServer
           from garminconnect import Garmin
           "
+      - run: pip install pytest garmin-fit-sdk
+      - run: python -m pytest tests_integration -q -p no:cacheprovider
 
   test-frontend:
     runs-on: ubuntu-latest

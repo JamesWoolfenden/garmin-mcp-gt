@@ -16,6 +16,7 @@ Endpoints:
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 import os
 import time
 import uuid
@@ -1591,8 +1592,8 @@ async def nudge(request: Request):
 # Generate a key via POST /garmin/mcp-key (requires Firebase auth).
 
 
-def _mcp_user(request: Request) -> str:
-    key = request.headers.get("X-MCP-Key", "").strip()
+def _mcp_user(headers) -> str:
+    key = headers.get("X-MCP-Key", "").strip()
     if not key:
         raise HTTPException(status_code=401, detail="X-MCP-Key header required")
     key_hash = hashlib.sha256(key.encode()).hexdigest()
@@ -1603,24 +1604,25 @@ def _mcp_user(request: Request) -> str:
 
 
 try:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import Context, MCPServer
+    from mcp.server.transport_security import TransportSecuritySettings
     from garmin_mcp import _analyse_heart_rates
 
-    mcp = FastMCP("Garmin")
+    mcp = MCPServer("Garmin")
 
     @mcp.tool()
-    def get_today_stats(request: Request = None) -> dict:
+    def get_today_stats(ctx: Context) -> dict:
         """Return today's step count, distance, calories, active time, and resting HR."""
-        uid = _mcp_user(request) if request else ""
+        uid = _mcp_user(ctx.headers) if ctx.headers else ""
         result = _garmin_today(uid)
         if result is None:
             return {"error": "Garmin data unavailable"}
         return result
 
     @mcp.tool()
-    def get_sedentary_analysis(offset_days: int = 0, request: Request = None) -> dict:
+    def get_sedentary_analysis(ctx: Context, offset_days: int = 0) -> dict:
         """Analyse how sedentary a day was based on heart rate patterns."""
-        uid = _mcp_user(request) if request else ""
+        uid = _mcp_user(ctx.headers) if ctx.headers else ""
         with GarminSession(uid) as g:
             from datetime import timedelta
 
@@ -1630,7 +1632,27 @@ try:
             data = g.get_heart_rates(d)
         return _analyse_heart_rates(data, d)
 
-    app.mount("/mcp", mcp.get_asgi_app())
+    # mcp 2.x defaults to a localhost-only Host allowlist (DNS-rebinding guard
+    # for unauthenticated local servers); this one is public and authenticated
+    # per request by X-MCP-Key, so the allowlist would 421 every real request.
+    _mcp_app = mcp.streamable_http_app(
+        streamable_http_path="/",
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False
+        ),
+    )
+    app.mount("/mcp", _mcp_app)
+
+    # A mounted sub-app's lifespan never runs, and the MCP session manager
+    # needs its task group started, so run it from the main app's lifespan.
+    _outer_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def _lifespan_with_mcp(a):
+        async with _outer_lifespan(a), _mcp_app.router.lifespan_context(_mcp_app):
+            yield
+
+    app.router.lifespan_context = _lifespan_with_mcp
     logger.info("MCP server mounted at /mcp")
 except Exception as e:
     logger.warning(f"MCP server not available: {e}")
