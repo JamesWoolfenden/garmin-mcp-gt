@@ -99,3 +99,5 @@ body { font-family: var(--font); color: var(--text); -webkit-font-smoothing: ant
 .divider { color: var(--muted); font-size: 12px; }
 .link-btn { background: none; border: none; color: var(--muted); font-size: 13px; cursor: pointer; text-decoration: underline; }
 .push-err { font-size: 12px; color: var(--over); }
+.chat-earlier { align-self: center; background: none; border: none; color: var(--muted); font-size: 12px; cursor: pointer; padding: 4px 8px; }
+.chat-earlier:hover { color: var(--text); }

@@ -81,4 +81,17 @@ describe("Chat markdown rendering", () => {
     expect(await screen.findByText("what about **today**?")).toBeInTheDocument();
     expect(screen.queryByText("today", { selector: "strong" })).not.toBeInTheDocument();
   });
+
+  it("opens on the latest messages and reveals older ones on request", async () => {
+    mockApi.getChatHistory.mockResolvedValue(
+      Array.from({ length: 10 }, (_, n) => ({ role: "user", text: `msg ${n}` }))
+    );
+    render(<App />);
+    await userEvent.click(await screen.findByText("Ask"));
+
+    expect(await screen.findByText("msg 9")).toBeInTheDocument();
+    expect(screen.queryByText("msg 0")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText("Show 4 earlier messages"));
+    expect(screen.getByText("msg 0")).toBeInTheDocument();
+  });
 });

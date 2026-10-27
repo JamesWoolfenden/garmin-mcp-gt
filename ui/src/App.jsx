@@ -158,8 +158,11 @@ function PushToggle({ pushState, onSubscribe, onUnsubscribe }) {
   );
 }
 
+const CHAT_RECENT = 6;
+
 function Chat() {
   const [messages, setMessages] = useState([]);
+  const [showAll, setShowAll] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef(null);
@@ -192,13 +195,21 @@ function Chat() {
     }
   };
 
+  // Open on the latest exchange, not the whole stored history.
+  const hidden = showAll ? 0 : Math.max(0, messages.length - CHAT_RECENT);
+
   return (
     <div className="chat">
       <div className="chat-messages">
         {messages.length === 0 && (
           <p className="empty">Ask about your activity, sleep, heart rate…</p>
         )}
-        {messages.map((m, i) => (
+        {hidden > 0 && (
+          <button type="button" className="chat-earlier" onClick={() => setShowAll(true)}>
+            Show {hidden} earlier message{hidden === 1 ? "" : "s"}
+          </button>
+        )}
+        {messages.map((m, i) => i < hidden ? null : (
           <div key={i} className={`chat-msg chat-msg-${m.role}`}>
             {m.role === "assistant" ? (
               <ReactMarkdown>{m.text}</ReactMarkdown>
