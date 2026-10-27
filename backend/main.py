@@ -16,7 +16,7 @@ Endpoints:
 
 import asyncio
 import json
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 import os
 import time
 import uuid
@@ -72,7 +72,20 @@ from garmin_client import GarminSession
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="fuel-backend", docs_url=None, redoc_url=None)
+# Sub-apps whose own lifespan must run (a mounted app's lifespan never does).
+_lifespan_apps: list = []
+
+
+@asynccontextmanager
+async def _lifespan(_app):
+    async with AsyncExitStack() as stack:
+        for sub in _lifespan_apps:
+            await stack.enter_async_context(sub.router.lifespan_context(sub))
+        yield
+
+
+app = FastAPI(title="fuel-backend", docs_url=None, redoc_url=None, lifespan=_lifespan)
+_mcp_mounted = False
 
 
 class _PathRewrite:
@@ -854,7 +867,7 @@ def send_push(subscription: dict, title: str, body: str) -> bool:
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "mcp": _mcp_mounted}
 
 
 # -- Food ---------------------------------------------------------------------
@@ -1712,19 +1725,15 @@ try:
     )
     app.mount("/mcp", _McpKeyGate(_mcp_app))
 
-    # A mounted sub-app's lifespan never runs, and the MCP session manager
-    # needs its task group started, so run it from the main app's lifespan.
-    _outer_lifespan = app.router.lifespan_context
-
-    @asynccontextmanager
-    async def _lifespan_with_mcp(a):
-        async with _outer_lifespan(a), _mcp_app.router.lifespan_context(_mcp_app):
-            yield
-
-    app.router.lifespan_context = _lifespan_with_mcp
+    # The MCP session manager needs its task group started by the sub-app's
+    # lifespan, which Starlette doesn't run for mounted apps: see _lifespan.
+    _lifespan_apps.append(_mcp_app)
+    _mcp_mounted = True
     logger.info("MCP server mounted at /mcp")
 except Exception as e:
-    logger.warning(f"MCP server not available: {e}")
+    # Not fatal (the rest of the API is unrelated), but this must be visible:
+    # a silent failure here was behind the 2026-10-11 outage.
+    logger.error("MCP server NOT mounted: %s", e, exc_info=True)
 
 
 # ── Chat endpoint (Claude API with Garmin tools) ──────────────────────────────

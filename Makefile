@@ -20,6 +20,9 @@ build-image:
 test-python:
 	pip install -q fastapi uvicorn httpx pytest pytest-asyncio pydantic
 	python -m pytest
+	# real mcp library, run on its own: tests/ mocks mcp wholesale
+	pip install -q -r backend/requirements.txt
+	python -m pytest tests_integration -p no:cacheprovider
 
 test-frontend:
 	cd ui && npm ci && npm test

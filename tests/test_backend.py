@@ -103,7 +103,7 @@ def test_no_internal_secret_allows_all(client):
 def test_health(client):
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json()["status"] == "ok"
 
 
 def test_api_prefix_reaches_same_routes(client):
@@ -111,7 +111,7 @@ def test_api_prefix_reaches_same_routes(client):
     for path in ("/api/health", "/api/health/"):
         resp = client.get(path)
         assert resp.status_code == 200, path
-    assert client.get("/api/health").json() == {"status": "ok"}
+    assert client.get("/api/health").json()["status"] == "ok"
     assert client.get("/api/nope").status_code == 404
     assert client.get("/apix/health").status_code == 404  # prefix, not substring
 

@@ -159,3 +159,9 @@ def test_backend_mcp_reachable_under_api_prefix(web):
     h = _user(main, "u-api", "api@example.com", "key-api")
     assert c.post("/api/mcp", headers=h, json=INIT).status_code == 200
     assert c.post("/api/mcp", headers=HEADERS, json=INIT).status_code == 401
+
+
+def test_health_reports_mcp_mounted(web):
+    _, c = web
+    r = c.get("/health")
+    assert r.json() == {"status": "ok", "mcp": True}

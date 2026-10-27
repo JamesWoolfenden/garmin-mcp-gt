@@ -7,6 +7,7 @@ Run `garmin-setup` once to authenticate and save session tokens.
 import math
 import os
 import stat
+import threading
 from datetime import date, datetime, timedelta, timezone
 from getpass import getpass
 from pathlib import Path
@@ -23,26 +24,34 @@ TOKEN_DIR = str(Path(_raw_token_dir).expanduser().resolve())
 mcp = MCPServer("Garmin")
 
 _client: Garmin | None = None
+# mcp 2.x runs sync tools on worker threads, so concurrent first calls would
+# each build and log in their own client without this.
+_client_lock = threading.Lock()
 
 
 def client() -> Garmin:
     global _client
-    if _client is None:
-        token_path = Path(TOKEN_DIR)
-        if not token_path.exists() or not any(token_path.iterdir()):
-            raise ToolError(
-                "No Garmin tokens found. Run `garmin-setup` to authenticate first."
-            )
-        try:
-            _client = Garmin()
-            _client.login(TOKEN_DIR)
-        except Exception as e:
-            _client = None  # reset so next call retries after transient failure
-            raise ToolError(
-                "Failed to connect to Garmin Connect. "
-                "Try running `garmin-setup` again to refresh your tokens."
-            ) from e
-    return _client
+    if _client is not None:
+        return _client
+    with _client_lock:
+        if _client is None:
+            token_path = Path(TOKEN_DIR)
+            if not token_path.exists() or not any(token_path.iterdir()):
+                raise ToolError(
+                    "No Garmin tokens found. Run `garmin-setup` to authenticate first."
+                )
+            try:
+                g = Garmin()
+                g.login(TOKEN_DIR)
+            except Exception as e:
+                # _client stays None so the next call retries after a
+                # transient failure
+                raise ToolError(
+                    "Failed to connect to Garmin Connect. "
+                    "Try running `garmin-setup` again to refresh your tokens."
+                ) from e
+            _client = g  # published only once login has succeeded
+        return _client
 
 
 TYPE_PREF = {"road_biking": 0, "cycling": 1}
