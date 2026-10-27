@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { logEntry, deleteFood, deleteActivity, getBalance, sendChat, getChatHistory, createGarminUploadToken, getProfile, updateProfile, requestAccess, getCyclingForecast, getProgression } from "./lib/api";
+import { logEntry, deleteFood, deleteActivity, getBalance, sendChat, getChatHistory, createGarminUploadToken, createMcpKey, getProfile, updateProfile, requestAccess, getCyclingForecast, getProgression } from "./lib/api";
 import { usePush } from "./hooks/usePush";
 import { useAuth } from "./hooks/useAuth";
 import { signInWithGoogle, signInWithEmail, registerWithEmail, signOutUser } from "./firebase";
@@ -364,6 +364,7 @@ function Settings() {
           </button>
         </form>
         <GarminConnect nested />
+        <McpKey nested />
         </>
       )}
     </div>
@@ -415,6 +416,80 @@ function GarminConnect({ nested = false }) {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// The key is held in component state only: shown once (never rendered as
+// text), copied via the clipboard, and cleared on Done or after a minute.
+export function McpKey({ nested = false }) {
+  const [step, setStep] = useState("idle"); // idle | confirm | ready
+  const [key, setKey] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState(null);
+
+  const clear = () => {
+    setKey(null);
+    setStep("idle");
+    setCopied(false);
+  };
+
+  useEffect(() => {
+    if (step !== "ready") return;
+    const t = setTimeout(clear, 60000);
+    return () => clearTimeout(t);
+  }, [step]);
+
+  const generate = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { key: k } = await createMcpKey();
+      setKey(k);
+      setStep("ready");
+    } catch {
+      setError("Could not generate a key. Try again.");
+      setStep("idle");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(key);
+    setCopied(true);
+  };
+
+  return (
+    <div style={nested ? {marginTop:"12px",paddingTop:"12px",borderTop:"1px solid var(--border)"} : {padding:"16px 20px",borderTop:"1px solid var(--border)"}}>
+      <p style={{fontSize:"13px",color:"var(--muted)",marginBottom:"10px"}}>
+        MCP key for connecting Claude to your Garmin data.
+      </p>
+      {step === "idle" && (
+        <button className="push-btn" onClick={() => setStep("confirm")}>Generate MCP key</button>
+      )}
+      {step === "confirm" && (
+        <div>
+          <p style={{fontSize:"12px",color:"var(--muted)",marginBottom:"6px"}}>
+            This replaces your current key. Anything using the old one stops working.
+          </p>
+          <button className="push-btn" onClick={generate} disabled={loading}>
+            {loading ? "Generating…" : "Replace key"}
+          </button>{" "}
+          <button className="link-btn" onClick={clear}>Cancel</button>
+        </div>
+      )}
+      {step === "ready" && (
+        <div>
+          <p style={{fontSize:"12px",color:"var(--muted)",marginBottom:"6px"}}>
+            Key ready. Copy it now: it is shown once and clears in a minute. Send it as the X-MCP-Key header.
+          </p>
+          <button className="push-btn" onClick={copy}>{copied ? "Copied!" : "Copy key"}</button>{" "}
+          <button className="link-btn" onClick={clear}>Done</button>
+        </div>
+      )}
+      {error && <p role="alert" style={{fontSize:"12px",color:"var(--danger, #c0392b)",marginTop:"6px"}}>{error}</p>}
     </div>
   );
 }
