@@ -2,7 +2,7 @@
 # After running, add these as GitHub Actions repository variables:
 #   WIF_PROVIDER  — printed at the end
 #   DEPLOY_SA     — printed at the end
-#   VITE_API_URL  — https://fuel-backend-zbq7wtzkjq-ew.a.run.app
+#   VITE_API_URL  — https://fuel.wlfdn.dev/api
 #   VITE_VAPID_PUBLIC_KEY — the URL-safe base64 application server key
 
 $PROJECT    = "pike-477416"
@@ -63,5 +63,5 @@ Write-Host "Done. Add these as GitHub Actions repository variables (Settings -> 
 Write-Host ""
 Write-Host "  WIF_PROVIDER  = $WIF_PROVIDER"
 Write-Host "  DEPLOY_SA     = $SA_EMAIL"
-Write-Host "  VITE_API_URL  = https://fuel-backend-zbq7wtzkjq-ew.a.run.app"
+Write-Host "  VITE_API_URL  = https://fuel.wlfdn.dev/api"
 Write-Host "  VITE_VAPID_PUBLIC_KEY = BHpT6uAIFFM6p-8B8GgYUNAr_HoXGd_ITXXlYXYEnhr6rCRkKlE_m5R7fIgFDoY0-MYaQQNz7r_DZ2aCgb-pm5A"

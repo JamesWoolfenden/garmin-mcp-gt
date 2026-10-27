@@ -74,6 +74,31 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="fuel-backend", docs_url=None, redoc_url=None)
 
+
+class _PathRewrite:
+    """Make the backend reachable at /api/* (Firebase Hosting rewrites
+    fuel.wlfdn.dev/api/** to this service without stripping the prefix) and
+    still directly at /*. Also maps /mcp -> /mcp/: Mount only matches the
+    slash form and otherwise redirects (to http:// behind Cloud Run's proxy).
+    """
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            path = scope["path"]
+            if path == "/api" or path.startswith("/api/"):
+                path = path[4:] or "/"
+            if path == "/mcp":
+                path = "/mcp/"
+            if path != scope["path"]:
+                scope = {**scope, "path": path, "raw_path": path.encode()}
+        await self.inner(scope, receive, send)
+
+
+app.add_middleware(_PathRewrite)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -1653,18 +1678,6 @@ try:
                 return
             await self.inner(scope, receive, send)
 
-    class _McpExactPath:
-        """Serve /mcp itself: Mount only matches /mcp/ and redirects (to
-        http:// behind Cloud Run's proxy) otherwise."""
-
-        def __init__(self, inner):
-            self.inner = inner
-
-        async def __call__(self, scope, receive, send):
-            if scope["type"] == "http" and scope["path"] == "/mcp":
-                scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
-            await self.inner(scope, receive, send)
-
     @mcp.tool()
     def get_today_stats(ctx: Context) -> dict:
         """Return today's step count, distance, calories, active time, and resting HR."""
@@ -1698,7 +1711,6 @@ try:
         ),
     )
     app.mount("/mcp", _McpKeyGate(_mcp_app))
-    app.add_middleware(_McpExactPath)
 
     # A mounted sub-app's lifespan never runs, and the MCP session manager
     # needs its task group started, so run it from the main app's lifespan.

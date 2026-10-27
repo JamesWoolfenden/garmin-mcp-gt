@@ -1,6 +1,8 @@
 import { getIdToken } from "../firebase";
 
-const BASE = import.meta.env.VITE_API_URL || "";
+// Same-origin by default: Firebase Hosting rewrites /api/** to the Cloud Run
+// service by name, so no backend URL is baked into the build.
+const BASE = import.meta.env.VITE_API_URL || "/api";
 
 async function req(path, opts = {}) {
   const token = await getIdToken();

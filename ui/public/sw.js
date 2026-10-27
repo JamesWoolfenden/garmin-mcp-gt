@@ -28,6 +28,8 @@ self.addEventListener("fetch", (e) => {
   // Cache Storage is keyed by URL alone, so caching them could show one
   // user's data to the next person on a shared device.
   if (url.origin !== self.location.origin) return;
+  // Same-origin /api calls are per-user: never cache them (see above).
+  if (url.pathname.startsWith("/api/")) return;
 
   // Static assets with content hash in URL: cache-first
   if (url.pathname.startsWith("/assets/")) {

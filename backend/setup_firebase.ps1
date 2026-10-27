@@ -3,7 +3,7 @@
 # Prerequisites: npm, firebase-tools, VAPID public key
 
 $PROJECT = "pike-477416"
-$BACKEND_URL = "https://fuel-backend-zbq7wtzkjq-ew.a.run.app"
+$BACKEND_URL = "https://fuel.wlfdn.dev/api"
 
 # Prompt for VAPID public key
 $VAPID_PUBLIC_KEY = Read-Host "VAPID application server key (URL-safe base64, NOT the PEM body — run: python -c `"import base64; der=base64.b64decode(open('public_key.pem').read().split('\n',1)[1].rsplit('\n',1)[0]); print(base64.urlsafe_b64encode(der[-65:]).rstrip(b'=').decode())`")"

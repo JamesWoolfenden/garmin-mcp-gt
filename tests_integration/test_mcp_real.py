@@ -151,3 +151,11 @@ def test_backend_key_respects_allowed_emails(web, monkeypatch):
     assert c.post("/mcp/", headers=h, json=INIT).status_code == 200
     monkeypatch.setattr(main, "_ALLOWED_EMAILS", {"someone-else@example.com"})
     assert c.post("/mcp/", headers=h, json=INIT).status_code == 401
+
+
+def test_backend_mcp_reachable_under_api_prefix(web):
+    """The deployed path: Hosting sends /api/mcp (no trailing slash)."""
+    main, c = web
+    h = _user(main, "u-api", "api@example.com", "key-api")
+    assert c.post("/api/mcp", headers=h, json=INIT).status_code == 200
+    assert c.post("/api/mcp", headers=HEADERS, json=INIT).status_code == 401

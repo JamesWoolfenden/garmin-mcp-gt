@@ -487,7 +487,7 @@ Write-File "firebase.json" @'
 '@
 
 Write-File ".env.example" @'
-REACT_APP_API_URL=https://fuel-backend-zbq7wtzkjq-ew.a.run.app
+REACT_APP_API_URL=https://fuel.wlfdn.dev/api
 REACT_APP_VAPID_PUBLIC_KEY=your_vapid_public_key_here
 '@
 

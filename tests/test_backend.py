@@ -106,6 +106,16 @@ def test_health(client):
     assert resp.json() == {"status": "ok"}
 
 
+def test_api_prefix_reaches_same_routes(client):
+    """Firebase Hosting forwards fuel.wlfdn.dev/api/** without stripping /api."""
+    for path in ("/api/health", "/api/health/"):
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+    assert client.get("/api/health").json() == {"status": "ok"}
+    assert client.get("/api/nope").status_code == 404
+    assert client.get("/apix/health").status_code == 404  # prefix, not substring
+
+
 # ── nudge timing ──────────────────────────────────────────────────────────────
 
 

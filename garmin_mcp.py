@@ -1782,7 +1782,7 @@ def _upload_tokens() -> None:
     )
     parser.add_argument(
         "--backend",
-        default="https://fuel-backend-430943803039.europe-west1.run.app",
+        default="https://fuel.wlfdn.dev/api",
         help="Fuel backend URL",
     )
     parser.add_argument("--token-dir", default=TOKEN_DIR, help="Garmin token directory")

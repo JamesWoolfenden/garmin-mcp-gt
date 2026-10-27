@@ -7,7 +7,7 @@
 
 param(
     [Parameter(Mandatory)][string]$UploadToken,
-    [string]$BackendUrl = "https://fuel-backend-430943803039.europe-west1.run.app",
+    [string]$BackendUrl = "https://fuel.wlfdn.dev/api",
     [string]$TokenDir   = "$env:USERPROFILE\.garmin_tokens"
 )
 
