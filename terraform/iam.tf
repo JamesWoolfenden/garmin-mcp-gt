@@ -14,6 +14,8 @@ resource "google_project_iam_member" "deploy_roles" {
     "roles/run.developer",
     "roles/artifactregistry.writer",
     "roles/firebasehosting.admin",
+    # firebase-tools calls serviceusage.services.get before deploying
+    "roles/serviceusage.serviceUsageConsumer",
   ])
   project = var.project_id
   role    = each.key

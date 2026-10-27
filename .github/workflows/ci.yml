@@ -154,7 +154,8 @@ jobs:
         working-directory: terraform
 
   deploy-frontend:
-    needs: [lint-and-build, test-python, test-docker-deps, test-frontend]
+    # after tofu: it enables firebasehosting.googleapis.com and grants the roles
+    needs: [lint-and-build, test-python, test-docker-deps, test-frontend, tofu]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
