@@ -2306,6 +2306,9 @@ def get_chat_history(uid: str = Depends(current_user)):
     return load_chat_history(uid)
 
 
+_CHAT_SLOW_S = 40  # warn well before Firebase Hosting's 60s proxy limit
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest, uid: str = Depends(current_user)):
     if not req.message.strip():
@@ -2340,8 +2343,13 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
     # could run past Cloud Run's request timeout.
     garmin_session: GarminSession | None = None
     garmin_client = None
+    started = time.monotonic()
+    rounds = 0
+    tools_used: list[str] = []
+    outcome = "error"
     try:
         for _ in range(5):  # max 5 tool call rounds
+            rounds += 1
             response = await run_in_threadpool(
                 lambda: ANTHROPIC_CLIENT.messages.create(
                     model="claude-sonnet-4-5",
@@ -2357,6 +2365,7 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
                 # Persist to encrypted chat history
                 await run_in_threadpool(save_chat_message, uid, "user", req.message)
                 await run_in_threadpool(save_chat_message, uid, "assistant", text)
+                outcome = "ok"
                 return {"response": text}
 
             if response.stop_reason != "tool_use":
@@ -2366,6 +2375,7 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
             tool_results = []
             for block in response.content:
                 if block.type == "tool_use":
+                    tools_used.append(block.name)
                     try:
                         if block.name != "get_food_log" and garmin_client is None:
                             garmin_session = GarminSession(uid)
@@ -2392,7 +2402,19 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": tool_results})
 
+        outcome = "gave_up"
         return {"response": "Sorry, I couldn't complete that request."}
     finally:
         if garmin_session is not None:
             await run_in_threadpool(garmin_session.__exit__, None, None, None)
+        # Firebase Hosting cuts proxied requests off at 60s (/api rewrite), so
+        # turns approaching that need to be visible: grep logs for "chat turn".
+        elapsed = time.monotonic() - started
+        logger.log(
+            logging.WARNING if elapsed >= _CHAT_SLOW_S else logging.INFO,
+            "chat turn %.1fs outcome=%s rounds=%d tools=%s",
+            elapsed,
+            outcome,
+            rounds,
+            ",".join(tools_used) or "-",
+        )
