@@ -122,7 +122,8 @@ jobs:
     timeout-minutes: 30
     concurrency:
       group: tofu-${{ github.ref }}
-      cancel-in-progress: true
+      # never cancel a running apply: it would leave the state lock behind
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
