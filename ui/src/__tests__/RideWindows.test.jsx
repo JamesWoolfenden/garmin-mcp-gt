@@ -156,3 +156,17 @@ describe("Ride tab", () => {
     expect(screen.getAllByText("1.2mm").length).toBeGreaterThan(0);
   });
 });
+
+describe("CollapsibleSection", () => {
+  it("toggles and remembers closed state", async () => {
+    localStorage.clear();
+    const { CollapsibleSection } = await import("../App");
+    const { unmount } = render(<CollapsibleSection id="t" title="T"><p>body</p></CollapsibleSection>);
+    expect(screen.getByText("body")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: /T/ }));
+    expect(screen.queryByText("body")).toBeNull();
+    unmount();
+    render(<CollapsibleSection id="t" title="T"><p>body</p></CollapsibleSection>);
+    expect(screen.queryByText("body")).toBeNull();
+  });
+});

@@ -767,6 +767,41 @@ export function BestTimes({ windows, onPick }) {
   );
 }
 
+const SECTIONS_KEY = "fuel.rideSections";
+
+function loadClosed() {
+  try {
+    const v = JSON.parse(localStorage.getItem(SECTIONS_KEY));
+    return Array.isArray(v) ? v : [];
+  } catch { return []; }
+}
+
+export function CollapsibleSection({ id, title, children }) {
+  const [open, setOpen] = useState(() => !loadClosed().includes(id));
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    try {
+      const closed = loadClosed().filter(x => x !== id);
+      localStorage.setItem(SECTIONS_KEY, JSON.stringify(next ? closed : [...closed, id]));
+    } catch { /* storage unavailable: still toggles for this visit */ }
+  };
+  return (
+    <section>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        style={{display:"flex",alignItems:"center",gap:"6px",width:"100%",background:"none",border:"none",padding:0,marginBottom:open?"10px":0,cursor:"pointer",fontSize:"14px",fontWeight:600,color:"var(--muted)",textAlign:"left"}}
+      >
+        <span aria-hidden="true" style={{display:"inline-block",width:"12px"}}>{open ? "▾" : "▸"}</span>
+        {title}
+      </button>
+      {open && children}
+    </section>
+  );
+}
+
 export function CyclingProgress() {
   const [forecast, setForecast] = useState(null);
   const [forecastError, setForecastError] = useState(null);
@@ -821,19 +856,7 @@ export function CyclingProgress() {
 
   return (
     <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:"24px"}}>
-      <section>
-        <h2 style={{fontSize:"14px",color:"var(--muted)",marginBottom:"10px"}}>Recent rides</h2>
-        {recentRides.length ? (
-          <div>
-            {recentRides.map(r => <RideRow key={r.activity_id} ride={r} />)}
-          </div>
-        ) : (
-          <p style={{fontSize:"13px",color:"var(--muted)"}}>No recent rides found.</p>
-        )}
-      </section>
-
-      <section>
-        <h2 style={{fontSize:"14px",color:"var(--muted)",marginBottom:"10px"}}>Best times to ride this week</h2>
+      <CollapsibleSection id="best" title="Best times to ride this week">
         <RidePrefs rideType={prefs.rideType} minHours={prefs.minHours} onChange={changePrefs} />
         {forecastError === "location_not_set" ? (
           <p style={{fontSize:"13px",color:"var(--muted)"}}>
@@ -862,20 +885,18 @@ export function CyclingProgress() {
           </div>
           </>
         )}
-      </section>
+      </CollapsibleSection>
 
       <WeatherDetailModal day={selectedDay} onClose={() => setSelectedDay(null)} />
 
-      <section>
-        <h2 style={{fontSize:"14px",color:"var(--muted)",marginBottom:"10px"}}>Fitness (VO2max)</h2>
+      <CollapsibleSection id="vo2" title="Fitness (VO2max)">
         <Sparkline data={vo2Points} />
         <p style={{fontSize:"12px",color:"var(--muted)",marginTop:"4px"}}>
           {latestVo2 ? `Latest: ${latestVo2.vo2max}` : "No VO2max data yet."}
         </p>
-      </section>
+      </CollapsibleSection>
 
-      <section>
-        <h2 style={{fontSize:"14px",color:"var(--muted)",marginBottom:"10px"}}>Weight trend</h2>
+      <CollapsibleSection id="weight" title="Weight trend">
         <Sparkline data={weightPoints} color="var(--ok)" />
         <p style={{fontSize:"12px",color:"var(--muted)",marginTop:"4px"}}>
           {latestWeight
@@ -886,7 +907,17 @@ export function CyclingProgress() {
               }`
             : "No weight data yet."}
         </p>
-      </section>
+      </CollapsibleSection>
+
+      <CollapsibleSection id="recent" title="Recent rides">
+        {recentRides.length ? (
+          <div>
+            {recentRides.map(r => <RideRow key={r.activity_id} ride={r} />)}
+          </div>
+        ) : (
+          <p style={{fontSize:"13px",color:"var(--muted)"}}>No recent rides found.</p>
+        )}
+      </CollapsibleSection>
     </div>
   );
 }
