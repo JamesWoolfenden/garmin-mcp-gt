@@ -1603,10 +1603,10 @@ def _mcp_user(request: Request) -> str:
 
 
 try:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
     from garmin_mcp import _analyse_heart_rates
 
-    mcp = FastMCP("Garmin")
+    mcp = MCPServer("Garmin")
 
     @mcp.tool()
     def get_today_stats(request: Request = None) -> dict:
@@ -1630,7 +1630,7 @@ try:
             data = g.get_heart_rates(d)
         return _analyse_heart_rates(data, d)
 
-    app.mount("/mcp", mcp.get_asgi_app())
+    app.mount("/mcp", mcp.streamable_http_app(streamable_http_path="/"))
     logger.info("MCP server mounted at /mcp")
 except Exception as e:
     logger.warning(f"MCP server not available: {e}")

@@ -13,13 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from garminconnect import Garmin
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 # Resolve and normalise the token directory (expanduser handles ~, resolve normalises)
 _raw_token_dir = os.environ.get("GARMIN_TOKEN_DIR", str(Path.home() / ".garmin_tokens"))
 TOKEN_DIR = str(Path(_raw_token_dir).expanduser().resolve())
 
-mcp = FastMCP("Garmin")
+mcp = MCPServer("Garmin")
 
 _client: Garmin | None = None
 

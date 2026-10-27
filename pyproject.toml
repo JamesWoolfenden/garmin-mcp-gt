@@ -22,10 +22,7 @@ dependencies = [
     # >=0.3.5: fixes a high-severity advisory where the OAuth token store
     # (refresh token) was written world-readable under the default umask.
     "garminconnect>=0.3.5,<0.4",
-    # mcp 2.0 renamed FastMCP -> MCPServer and changed its import path
-    # (mcp.server.fastmcp no longer exists); garmin_mcp.py is written against
-    # the 1.x API. Pin below 2 until that migration happens deliberately.
-    "mcp>=1.0.0,<3",
+    "mcp>=2.0.0,<3",
     "garmin-fit-sdk>=21.0.0",
 ]
 

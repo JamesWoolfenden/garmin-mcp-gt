@@ -70,7 +70,7 @@ jobs:
       - run: pip install --no-cache-dir -r backend/requirements.txt
       - run: |
           python -c "
-          from mcp.server.fastmcp import FastMCP
+          from mcp.server.mcpserver import MCPServer
           from garminconnect import Garmin
           "
 
