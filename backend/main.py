@@ -1841,11 +1841,11 @@ _GARMIN_TOOLS = [
             "properties": {
                 "latitude": {
                     "type": "number",
-                    "description": "Location latitude (e.g. 51.45 for Reading, UK)",
+                    "description": "Location latitude. Omit to use the user's saved home location.",
                 },
                 "longitude": {
                     "type": "number",
-                    "description": "Location longitude (e.g. -0.97 for Reading, UK)",
+                    "description": "Location longitude. Omit to use the user's saved home location.",
                 },
                 "days": {
                     "type": "integer",
@@ -1861,7 +1861,7 @@ _GARMIN_TOOLS = [
                     "description": "Shortest ride window to look for, in hours (default 2)",
                 },
             },
-            "required": ["latitude", "longitude"],
+            "required": [],
         },
     },
     {
@@ -2100,9 +2100,18 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> 
     elif tool_name == "get_weather":
         from garmin_core import get_weather as _get_weather
 
+        lat, lon = tool_input.get("latitude"), tool_input.get("longitude")
+        if lat is None or lon is None:
+            profile = get_profile(uid)
+            lat, lon = profile.get("latitude"), profile.get("longitude")
+        if lat is None or lon is None:
+            return {
+                "error": "location_not_set",
+                "hint": "Ask the user to set their location in the profile settings.",
+            }
         return _get_weather(
-            latitude=tool_input["latitude"],
-            longitude=tool_input["longitude"],
+            latitude=lat,
+            longitude=lon,
             days=tool_input.get("days", 3),
             min_ride_hours=tool_input.get("min_ride_hours", 2),
             ride_type=tool_input.get("ride_type", "road"),
@@ -2370,7 +2379,13 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
         f"then get_activity_detail on 3-5 of them to check cadence, left/right balance, "
         f"power phase, and platform centre offset across multiple rides. "
         f"When the user asks about overtraining, form, freshness, or whether to ride hard "
-        f"or rest today, call get_training_load."
+        f"or rest today, call get_training_load. "
+        f"When the user asks whether, when or where to ride (e.g. tomorrow's ride), "
+        f"call get_weather without latitude/longitude (it uses their saved home location) "
+        f"with days of at least 2, using the forecast day that matches the date they mean; "
+        f"call get_courses for route options and get_training_load for how hard to go. "
+        f"Never ask the user for their location: if get_weather returns location_not_set, "
+        f"tell them to set it in their profile."
     )
 
     # Build messages with history (last 10 turns) for conversational context
