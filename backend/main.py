@@ -29,7 +29,7 @@ from firebase_admin import auth as firebase_auth
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import anthropic
 from pywebpush import webpush, WebPushException
 import logging
@@ -754,6 +754,36 @@ def _compute_readiness(wellness: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def goal_context(profile: dict, today: date) -> str | None:
+    """One-line description of the user's training goal for LLM prompts, with
+    weeks to go and the phase of the build. None when no (future) goal is set."""
+    name = (profile.get("goal_name") or "").strip()
+    raw_date = profile.get("goal_date") or ""
+    if not name or not raw_date:
+        return None
+    try:
+        goal_date = date.fromisoformat(raw_date)
+    except ValueError:
+        return None
+    days = (goal_date - today).days
+    if days < 0:
+        return None
+    weeks = days // 7
+    if weeks >= 19:
+        phase = "base phase: aerobic volume, consistency, steady weight loss"
+    elif weeks >= 7:
+        phase = "build phase: longer rides, climbing, back-to-back days"
+    elif weeks >= 3:
+        phase = "peak phase: event-specific long days, rehearse fuelling"
+    else:
+        phase = "taper: reduce volume, stay fresh, fuel to full"
+    text = f"Training goal: {name} on {raw_date} ({weeks} weeks to go; {phase})."
+    details = (profile.get("goal_details") or "").strip()
+    if details:
+        text += f" Event details: {details}"
+    return text
+
+
 def claude_recommend(
     kcal_in: int,
     kcal_burned: int,
@@ -762,6 +792,7 @@ def claude_recommend(
     time_of_day: str,
     wellness: dict[str, Any] | None = None,
     macros: dict[str, int] | None = None,
+    goal: str | None = None,
 ) -> dict[str, Any]:
     """Ask Claude to produce a balance recommendation."""
     act_str = (
@@ -829,7 +860,13 @@ def claude_recommend(
             "Given calorie intake, calories burned, daily target, activities, time of day, "
             "recovery context, and macro breakdown, give a short personalised recommendation. "
             f"{activity_guidance}{wellness_str}{macros_str} "
-            'Return ONLY valid JSON: {"status": "on_track"|"over"|"under", "recommendation": string}. '
+            + (
+                f"{goal} Tie the advice to this goal where it fits: fuel big ride days, "
+                "and keep rest-day deficits gentle. "
+                if goal
+                else ""
+            )
+            + 'Return ONLY valid JSON: {"status": "on_track"|"over"|"under", "recommendation": string}. '
             "Recommendation must be 1-2 sentences max. No markdown, no preamble. "
             "Do NOT mention any app, website, or URL — the recommendation is read directly in a notification."
         ),
@@ -1237,6 +1274,7 @@ async def _compute_balance(uid: str, for_date: str | None = None) -> dict:
             time_of_day,
             wellness or {},
             agg["macros_today"],
+            goal_context(profile, user_today(uid)),
         )
     except Exception:
         net = agg["kcal_in"] - kcal_burned
@@ -1305,6 +1343,10 @@ class ProfileUpdate(BaseModel):
     waist_cm: int | None = None
     latitude: float | None = None
     longitude: float | None = None
+    # "" clears a goal field; None leaves it untouched.
+    goal_name: str | None = Field(default=None, max_length=120)
+    goal_date: str | None = Field(default=None, pattern=r"^(\d{4}-\d{2}-\d{2})?$")
+    goal_details: str | None = Field(default=None, max_length=500)
 
 
 @app.get("/profile")
@@ -2387,6 +2429,12 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
         f"Never ask the user for their location: if get_weather returns location_not_set, "
         f"tell them to set it in their profile."
     )
+    goal = goal_context(get_profile(uid), user_today(uid))
+    if goal:
+        system += (
+            f" {goal} Frame training, recovery and nutrition advice around this goal, "
+            f"and say how the user is tracking when it is relevant."
+        )
 
     # Build messages with history (last 10 turns) for conversational context
     messages = []

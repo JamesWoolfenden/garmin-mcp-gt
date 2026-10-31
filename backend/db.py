@@ -166,6 +166,9 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         "ALTER TABLE user_profile ADD COLUMN waist_cm INTEGER",
         "ALTER TABLE user_profile ADD COLUMN latitude REAL",
         "ALTER TABLE user_profile ADD COLUMN longitude REAL",
+        "ALTER TABLE user_profile ADD COLUMN goal_name TEXT",
+        "ALTER TABLE user_profile ADD COLUMN goal_date TEXT",
+        "ALTER TABLE user_profile ADD COLUMN goal_details TEXT",
     ]:
         try:
             conn.execute(migration)
@@ -470,6 +473,9 @@ DEFAULT_PROFILE = {
     "waist_cm": None,
     "latitude": None,
     "longitude": None,
+    "goal_name": None,
+    "goal_date": None,
+    "goal_details": None,
 }
 
 
@@ -491,8 +497,10 @@ def upsert_profile(user_id: str, updates: dict) -> dict:
     merged = {**current, **updates, "user_id": user_id}
     get_db().execute(
         "INSERT OR REPLACE INTO user_profile "
-        "(user_id, kcal_target, nudge_times, timezone, height_cm, waist_cm, latitude, longitude) "
-        "VALUES (:user_id, :kcal_target, :nudge_times, :timezone, :height_cm, :waist_cm, :latitude, :longitude)",
+        "(user_id, kcal_target, nudge_times, timezone, height_cm, waist_cm, latitude, longitude, "
+        "goal_name, goal_date, goal_details) "
+        "VALUES (:user_id, :kcal_target, :nudge_times, :timezone, :height_cm, :waist_cm, :latitude, :longitude, "
+        ":goal_name, :goal_date, :goal_details)",
         {**merged, "nudge_times": json.dumps(merged["nudge_times"])},
     )
     get_db().commit()

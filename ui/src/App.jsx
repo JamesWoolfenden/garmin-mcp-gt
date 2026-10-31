@@ -243,6 +243,9 @@ function Settings() {
   const [waistCm, setWaistCm] = useState("");
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
+  const [goalName, setGoalName] = useState("");
+  const [goalDate, setGoalDate] = useState("");
+  const [goalDetails, setGoalDetails] = useState("");
   const [locating, setLocating] = useState(false);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -255,6 +258,9 @@ function Settings() {
     setWaistCm(p.waist_cm ? String(p.waist_cm) : "");
     setLatitude(p.latitude != null ? String(p.latitude) : "");
     setLongitude(p.longitude != null ? String(p.longitude) : "");
+    setGoalName(p.goal_name || "");
+    setGoalDate(p.goal_date || "");
+    setGoalDetails(p.goal_details || "");
     setSaved(p);
   };
 
@@ -297,6 +303,10 @@ function Settings() {
         ...(waistCm ? { waist_cm: parseInt(waistCm) } : {}),
         ...(latitude ? { latitude: parseFloat(latitude) } : {}),
         ...(longitude ? { longitude: parseFloat(longitude) } : {}),
+        // Always sent so that emptying a field clears the goal.
+        goal_name: goalName.trim(),
+        goal_date: goalDate,
+        goal_details: goalDetails.trim(),
       };
       const saved = await updateProfile(updates);
       applyProfile(saved);
@@ -319,6 +329,11 @@ function Settings() {
               {saved.height_cm ? ` · ${saved.height_cm}cm` : ""}
               {saved.waist_cm ? ` · waist ${saved.waist_cm}cm` : ""}
               {" · nudges "}{(saved.nudge_times || []).join(", ")}
+            </p>
+          )}
+          {saved && !open && saved.goal_name && saved.goal_date && (
+            <p style={{fontSize:"12px",color:"var(--muted)",marginTop:"2px"}}>
+              Goal: {saved.goal_name} · {saved.goal_date}
             </p>
           )}
         </div>
@@ -370,6 +385,20 @@ function Settings() {
               onClick={useMyLocation} disabled={locating}>
               {locating ? "Locating…" : "Use my location"}
             </button>
+          </label>
+          <label style={{fontSize:"13px",color:"var(--text)"}}>
+            Training goal
+            <input className="log-input" type="text" value={goalName}
+              onChange={e => setGoalName(e.target.value)} maxLength={120}
+              style={{display:"block",width:"100%",marginTop:"4px"}}
+              placeholder="e.g. Spring sportive or tour" />
+            <input className="log-input" type="date" value={goalDate}
+              onChange={e => setGoalDate(e.target.value)}
+              style={{display:"block",width:"100%",marginTop:"6px"}} />
+            <textarea className="log-input" value={goalDetails}
+              onChange={e => setGoalDetails(e.target.value)} maxLength={500} rows={3}
+              style={{display:"block",width:"100%",marginTop:"6px"}}
+              placeholder="Distance, climbing, what you're aiming for" />
           </label>
           <button className="log-btn" type="submit" disabled={loading}>
             {loading ? "Saving…" : "Save"}
