@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["ruff==0.17.0", "pre-commit"]
+dev = ["ruff==0.17.3", "pre-commit"]
 
 [tool.ruff.lint]
 # Explicit, pinned rule selection. Ruff's actual default rule set has grown
