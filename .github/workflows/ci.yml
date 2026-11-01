@@ -186,3 +186,19 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
       - name: Deploy to Firebase Hosting
         run: cd ui && npx firebase deploy --only hosting --project pike-477416 --force
+
+  dependency-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # Fails when an advisory reaches code that ships (uv.lock, ui/package-lock.json).
+      - uses: JamesWoolfenden/picard@728737d27a25fe79f7bd2ba3c2a267c588a1070c # master
+        with:
+          version: 728737d27a25fe79f7bd2ba3c2a267c588a1070c
+          fail-on: reachable
+          directories: |
+            .
+            ui
