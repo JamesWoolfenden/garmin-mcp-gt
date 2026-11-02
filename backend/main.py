@@ -2427,7 +2427,9 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
         f"with days of at least 2, using the forecast day that matches the date they mean; "
         f"call get_courses for route options and get_training_load for how hard to go. "
         f"Never ask the user for their location: if get_weather returns location_not_set, "
-        f"tell them to set it in their profile."
+        f"tell them to set it in their profile. "
+        f"For a quick question like \"Ride today?\" call only get_weather (and get_training_load "
+        f"if useful), then answer in a few sentences."
     )
     goal = goal_context(get_profile(uid), user_today(uid))
     if goal:
@@ -2460,14 +2462,16 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
             response = await run_in_threadpool(
                 lambda: ANTHROPIC_CLIENT.messages.create(
                     model="claude-sonnet-4-5",
-                    max_tokens=1024,
+                    max_tokens=2048,
                     system=system,
                     tools=_GARMIN_TOOLS,
                     messages=messages,
                 )
             )
 
-            if response.stop_reason == "end_turn":
+            if response.stop_reason in ("end_turn", "max_tokens"):
+                # max_tokens still carries a usable (if truncated) answer;
+                # dropping it surfaced as "Sorry, I couldn't complete that".
                 text = next((b.text for b in response.content if hasattr(b, "text")), "")
                 # Persist to encrypted chat history
                 await run_in_threadpool(save_chat_message, uid, "user", req.message)
