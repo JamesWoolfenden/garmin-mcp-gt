@@ -2410,9 +2410,13 @@ async def chat(req: ChatRequest, uid: str = Depends(current_user)):
         raise HTTPException(400, "message is required")
 
     today = today_str(uid)
+    # Give the weekday explicitly: models compute it from an ISO date unreliably,
+    # which skews "tomorrow", "Saturday" and "this week".
+    today_long = user_today(uid).strftime("%A %d %B %Y")
     system = (
         f"You are a personal health and fitness advisor for a cyclist. "
-        f"Today is {today}. You have access to the user's Garmin data and food diary via tools. "
+        f"Today is {today_long} ({today}). Resolve relative dates such as "
+        f"'yesterday', 'tomorrow' and weekday names from this date. You have access to the user's Garmin data and food diary via tools. "
         f"Be concise and practical. Use tools when the user asks about their activity, "
         f"sleep, heart rate, fitness data, or nutrition. "
         f"When the user asks about protein, calories, macros, diet, or what they've eaten, "
