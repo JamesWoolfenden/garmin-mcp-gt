@@ -4,9 +4,9 @@
 # Terraform to avoid the executor managing its own access.
 # See backend/setup-terraform-sa.ps1 for the bootstrap script.
 resource "google_service_account" "terraform" {
-  account_id   = "github-actions-terraform"
-  display_name = "GitHub Actions Terraform"
-  description  = "Service account used by GitHub Actions via Workload Identity Federation"
+  account_id   = "garmin-terraform"
+  display_name = "garmin-mcp-gt Terraform"
+  description  = "Runs tofu for garmin-mcp-gt in CI via its own WIF pool. Not shared with any other repo"
 }
 
 # The fuel_terraform role and its bindings to this SA are defined in ../iam

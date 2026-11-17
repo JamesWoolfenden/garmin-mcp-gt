@@ -3,7 +3,7 @@
 This is a **separate Terraform root module with its own state** (`prefix = "iam"`
 in the shared `terraform-pike-bucket-tfstate` bucket, distinct from the main
 `terraform/` module's `prefix = "fuel"`). It defines the `fuel_terraform`
-custom IAM role — the permissions granted to `github-actions-terraform`,
+custom IAM role — the permissions granted to `garmin-terraform`,
 the service account that runs `tofu apply` for `terraform/` in CI.
 
 ## Why this isn't just part of `terraform/`
@@ -12,7 +12,7 @@ the service account that runs `tofu apply` for `terraform/` in CI.
 role is "managed outside Terraform to avoid the executor managing its own
 access" — previously meaning raw `gcloud` commands run by hand. This module
 replaces those commands with reviewable, diffable code, but it **must never
-be applied by the `github-actions-terraform` SA or wired into the `tofu` CI
+be applied by the `garmin-terraform` SA or wired into the `tofu` CI
 job**. If the identity that runs `terraform/`'s `apply` could also grant
 itself more permissions via the same pipeline:
 

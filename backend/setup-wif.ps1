@@ -7,8 +7,8 @@
 
 $PROJECT    = "pike-477416"
 $REPO       = "JamesWoolfenden/garmin-mcp-gt"
-$POOL_ID    = "github-actions"
-$PROVIDER_ID = "github"
+$POOL_ID    = "garmin-mcp-gt"
+$PROVIDER_ID = "github-oidc"
 $SA_NAME    = "github-actions-deploy"
 $REGION     = "europe-west1"
 
@@ -19,7 +19,7 @@ Write-Host "-> Creating Workload Identity Pool..."
 gcloud iam workload-identity-pools create $POOL_ID `
   --project $PROJECT `
   --location global `
-  --display-name "GitHub Actions" 2>$null
+  --display-name "garmin-mcp-gt GitHub Actions" 2>$null
 
 Write-Host "-> Creating OIDC provider..."
 gcloud iam workload-identity-pools providers create-oidc $PROVIDER_ID `
@@ -28,6 +28,7 @@ gcloud iam workload-identity-pools providers create-oidc $PROVIDER_ID `
   --workload-identity-pool $POOL_ID `
   --display-name "GitHub" `
   --attribute-mapping "google.subject=assertion.sub,attribute.repository=assertion.repository" `
+  --attribute-condition "assertion.repository == '$REPO'" `
   --issuer-uri "https://token.actions.githubusercontent.com" 2>$null
 
 Write-Host "-> Creating service account..."
