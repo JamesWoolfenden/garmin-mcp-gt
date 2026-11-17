@@ -65,6 +65,6 @@ by `terraform/`'s current resources: `iam.roles.{create,delete,get,update}`,
 `storage.buckets.list`, `storage.objects.{create,delete,get,list}`,
 `cloudkms.cryptoKeys.list`, `cloudkms.keyRings.list`. They were deliberately
 left in place rather than trimmed, since some may be used by steps outside
-`terraform/` that `pike` can't see (e.g. `backend/setup-terraform-sa.ps1`).
+`terraform/` that `pike` can't see.
 Trimming to true least-privilege is a follow-up, not bundled into adding the
 missing permissions.

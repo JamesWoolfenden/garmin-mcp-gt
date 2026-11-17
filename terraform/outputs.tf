@@ -12,3 +12,8 @@ output "wif_provider" {
   value       = "projects/${data.google_project.this.number}/locations/global/workloadIdentityPools/${google_iam_workload_identity_pool.github.workload_identity_pool_id}/providers/${google_iam_workload_identity_pool_provider.github.workload_identity_pool_provider_id}"
   description = "Full resource name of the Workload Identity Pool Provider for GitHub Actions"
 }
+
+output "terraform_sa" {
+  value       = google_service_account.terraform.email
+  description = "Email of the service account CI uses to run tofu (TERRAFORM_SA secret)"
+}
