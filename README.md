@@ -152,10 +152,11 @@ The backend is a standard Cloud Run service. To deploy your own instance:
 
 1. Fork this repo
 2. Create a GCP project and enable the required APIs
-3. Run `backend/setup-wif.ps1` to configure GitHub Actions auth
-4. Run `backend/setup-secrets.ps1` to store your secrets
-5. Add GitHub Actions secrets (see `backend/setup-wif.ps1` output)
-6. Push to main — CI deploys everything automatically
+3. As a project owner, run `tofu apply` in `terraform/` locally. This creates the WIF pool/provider and the `garmin-terraform` / `github-actions-deploy` service accounts
+4. As a project owner, run `tofu apply` in `iam/` to grant `garmin-terraform` its `fuel_terraform` role (never applied by CI; see `iam/README.md`)
+5. Run `backend/setup-secrets.ps1` to store your secrets
+6. Add GitHub Actions secrets from `tofu output` in `terraform/`: `WIF_PROVIDER` (`wif_provider`), `TERRAFORM_SA` (`terraform_sa`), `DEPLOY_SA` (`deploy_sa`)
+7. Push to main — CI deploys everything automatically
 
 Infrastructure is managed with OpenTofu — see `terraform/`.
 

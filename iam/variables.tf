@@ -9,7 +9,7 @@ variable "project_id" {
 }
 
 variable "terraform_sa_email" {
-  default     = "github-actions-terraform@pike-477416.iam.gserviceaccount.com"
+  default     = "garmin-terraform@pike-477416.iam.gserviceaccount.com"
   description = "The CI service account this role is bound to."
   type        = string
   validation {
