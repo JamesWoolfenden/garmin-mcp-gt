@@ -16,6 +16,9 @@ resource "google_project_iam_member" "deploy_roles" {
     "roles/firebasehosting.admin",
     # firebase-tools calls serviceusage.services.get before deploying
     "roles/serviceusage.serviceUsageConsumer",
+    # legacy grants made by hand, adopted here only so they can be revoked in a follow-up
+    "roles/cloudbuild.builds.editor",
+    "roles/storage.admin",
   ])
   project = var.project_id
   role    = each.key
