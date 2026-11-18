@@ -7,6 +7,8 @@ resource "google_project_iam_custom_role" "fuel_terraform" {
 
   permissions = [
     "appengine.applications.get",
+    # Cloud Run checks at deploy time that the caller can read the image; pike can't see this
+    "artifactregistry.repositories.downloadArtifacts",
     "cloudkms.cryptoKeyVersions.destroy",
     "cloudkms.cryptoKeyVersions.list",
     "cloudkms.cryptoKeys.create",
