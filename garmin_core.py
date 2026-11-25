@@ -47,6 +47,34 @@ def _dedup(activities: list[dict]) -> list[dict]:
     return out
 
 
+# Garmin cycling typeKeys aren't all spelled "*cycling*": a standard road ride is
+# "road_biking" and a Zwift ride is "virtual_ride".
+_CYCLING_TYPE_MARKERS = ("cycl", "bik", "bmx", "ride")
+
+
+def _weekly_ride_summary(week_start: date, acts: list[dict]) -> dict[str, Any]:
+    """Summarise one Monday-to-Sunday week of already-deduplicated activities,
+    counting only cycling (outdoor and Zwift). Shared by garmin_mcp.get_weekly_trends
+    and the backend's per-user equivalent."""
+    rides = [
+        a
+        for a in acts
+        if any(
+            marker in (a.get("activityType", {}).get("typeKey") or "").lower()
+            for marker in _CYCLING_TYPE_MARKERS
+        )
+    ]
+    powers = [a["avgPower"] for a in rides if a.get("avgPower")]
+    return {
+        "week_start": week_start.isoformat(),
+        "week_end": (week_start + timedelta(days=6)).isoformat(),
+        "ride_count": len(rides),
+        "total_km": round(sum(a.get("distance", 0) for a in rides) / 1000, 1),
+        "total_hours": round(sum(a.get("duration", 0) for a in rides) / 3600, 1),
+        "avg_power_w": round(sum(powers) / len(powers), 1) if powers else None,
+    }
+
+
 def _weather_code_desc(code: int | None) -> str:
     codes = {
         0: "Clear sky",

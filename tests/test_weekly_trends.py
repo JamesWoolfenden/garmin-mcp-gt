@@ -38,3 +38,27 @@ def test_virtual_ride_counts_in_weekly_totals(monkeypatch):
     assert this_week["ride_count"] == 2
     assert this_week["total_km"] == 40.0
     assert this_week["total_hours"] == 1.5
+    assert this_week["avg_power_w"] == 175.0
+
+
+def test_backend_weekly_trends_uses_session_client_and_counts_zwift():
+    import backend.main as bm
+
+    today = date.today()
+    acts = [
+        _act("virtual_ride", f"{today.isoformat()}T18:00:00", 10000, 1800, power=150),
+    ]
+
+    result = bm._compute_weekly_trends(_FakeClient(acts), today, weeks=2)
+
+    assert len(result) == 2  # oldest week first, this week last
+    assert result[-1]["ride_count"] == 1
+    assert result[-1]["total_km"] == 10.0
+
+
+def test_backend_weekly_trends_clamps_weeks():
+    import backend.main as bm
+
+    result = bm._compute_weekly_trends(_FakeClient([]), date.today(), weeks=999)
+
+    assert len(result) == 52

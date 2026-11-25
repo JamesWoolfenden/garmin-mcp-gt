@@ -576,6 +576,25 @@ def _compute_training_load(g, today: date, days: int = 42) -> dict[str, Any]:
     return gm._training_load_result(series)
 
 
+def _compute_weekly_trends(g, today: date, weeks: int = 8) -> list[dict[str, Any]]:
+    """Weekly cycling summary (outdoor and Zwift) using the caller's already-open
+    Garmin session (see _compute_weight_trend). `today` is the caller's user-local
+    date. Shares its summary logic with garmin_mcp.get_weekly_trends via
+    garmin_core._weekly_ride_summary."""
+    import garmin_core as gm
+
+    weeks = max(1, min(weeks, 52))
+    results = []
+    for w in range(weeks - 1, -1, -1):
+        week_start = today - timedelta(days=today.weekday() + w * 7)
+        week_end = week_start + timedelta(days=6)
+        acts = gm._dedup(
+            g.get_activities_by_date(week_start.isoformat(), week_end.isoformat())
+        )
+        results.append(gm._weekly_ride_summary(week_start, acts))
+    return results
+
+
 async def fetch_garmin(uid: str) -> dict[str, Any] | None:
     return await run_in_threadpool(_garmin_today, uid)
 
@@ -1860,8 +1879,20 @@ _GARMIN_TOOLS = [
     },
     {
         "name": "get_weekly_trends",
-        "description": "Get weekly cycling/activity summary with km, hours, and average power.",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "description": (
+            "Get weekly cycling summary (outdoor and Zwift rides) with ride count, "
+            "km, hours, and average power, oldest week first."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "weeks": {
+                    "type": "integer",
+                    "description": "Number of weeks to look back (default 8, max 52)",
+                }
+            },
+            "required": [],
+        },
     },
     {
         "name": "get_weight",
@@ -2135,7 +2166,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> 
         hrv_data = g.get_hrv_data(d_today)
         return hrv_data or {"error": "No HRV data"}
     elif tool_name == "get_weekly_trends":
-        return {"note": "weekly trends"}
+        return _compute_weekly_trends(g, today, tool_input.get("weeks", 8))
     elif tool_name == "get_weight":
         weight = g.get_weigh_ins(d_today, d_today)
         return weight or {"error": "No weight data"}

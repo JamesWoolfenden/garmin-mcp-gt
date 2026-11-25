@@ -25,6 +25,7 @@ from garmin_core import (  # noqa: F401  (re-exported: tests and tools use these
     _training_load_result,
     _training_load_series,
     _weather_code_desc,
+    _weekly_ride_summary,
     _wind_dir,
     courses_from,
     get_weather as _get_weather,
@@ -997,33 +998,7 @@ def get_weekly_trends(weeks: int = 8) -> list[dict[str, Any]]:
         acts = _dedup(
             c.get_activities_by_date(week_start.isoformat(), week_end.isoformat())
         )
-        # "virtual_ride" is how Garmin files Zwift rides
-        rides = [
-            a
-            for a in acts
-            if any(
-                marker in (a.get("activityType", {}).get("typeKey") or "").lower()
-                for marker in ("cycling", "biking", "ride")
-            )
-        ]
-        results.append(
-            {
-                "week_start": week_start.isoformat(),
-                "week_end": week_end.isoformat(),
-                "ride_count": len(rides),
-                "total_km": round(sum(a.get("distance", 0) for a in rides) / 1000, 1),
-                "total_hours": round(
-                    sum(a.get("duration", 0) for a in rides) / 3600, 1
-                ),
-                "avg_power_w": round(
-                    sum(a.get("avgPower", 0) or 0 for a in rides if a.get("avgPower"))
-                    / max(sum(1 for a in rides if a.get("avgPower")), 1),
-                    1,
-                )
-                if any(a.get("avgPower") for a in rides)
-                else None,
-            }
-        )
+        results.append(_weekly_ride_summary(week_start, acts))
     return results
 
 
