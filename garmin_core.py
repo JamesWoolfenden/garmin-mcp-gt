@@ -465,6 +465,22 @@ def _valid_hr_avg(readings: list) -> float | None:
     return round(sum(valid) / len(valid), 1) if valid else None
 
 
+# Garmin's summary averageHR counts a dropped signal as 0, so an average this far
+# below the ride's own max HR means the signal went missing for much of the ride
+# (a real ride averages well over half its max). 0.5 only catches clear dropouts.
+HR_DROPOUT_RATIO = 0.5
+
+
+def _avg_hr_fields(src: dict) -> dict[str, Any]:
+    """avg_hr_bpm and hr_unreliable from a Garmin activity or summaryDTO dict. When
+    the summary average is clearly dropout-diluted, report no average and flag it
+    instead of a wrong number (the real figure needs the FIT file; see
+    _hr_from_records)."""
+    avg, peak = src.get("averageHR"), src.get("maxHR")
+    unreliable = bool(avg and peak and avg < HR_DROPOUT_RATIO * peak)
+    return {"avg_hr_bpm": None if unreliable else avg, "hr_unreliable": unreliable}
+
+
 def _hr_from_records(records: list[dict], laps: list[dict]) -> dict[str, Any]:
     """Session and per-lap average HR recomputed from per-second FIT records,
     ignoring zero/missing readings, plus how much of the ride had a signal."""
@@ -671,7 +687,7 @@ def _training_load_series(
             continue
         duration_h = a.get("duration", 0) / 3600
         avg_power = a.get("avgPower")
-        avg_hr = a.get("averageHR")
+        avg_hr = _avg_hr_fields(a)["avg_hr_bpm"]
         if avg_power and ftp:
             intensity = avg_power / ftp
             load = duration_h * intensity**2 * 100

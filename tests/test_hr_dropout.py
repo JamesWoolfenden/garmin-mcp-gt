@@ -59,6 +59,41 @@ def test_lap_with_no_signal_reports_none_not_garmins_diluted_value():
     assert hr["lap_avg_hr_bpm"] == [None]
 
 
+def test_summary_avg_far_below_max_is_flagged_unreliable():
+    # Today's real Zwift ride: Garmin reported avg 32 / max 148 after a dropout.
+    fields = core._avg_hr_fields({"averageHR": 32.0, "maxHR": 148.0})
+
+    assert fields == {"avg_hr_bpm": None, "hr_unreliable": True}
+
+
+def test_normal_summary_avg_is_kept():
+    # Yesterday's Zwift ride: avg 137 is a plausible fraction of its max.
+    fields = core._avg_hr_fields({"averageHR": 137.0, "maxHR": 165.0})
+
+    assert fields == {"avg_hr_bpm": 137.0, "hr_unreliable": False}
+
+
+def test_missing_hr_is_not_flagged():
+    assert core._avg_hr_fields({}) == {"avg_hr_bpm": None, "hr_unreliable": False}
+
+
+def test_training_load_hr_fallback_skips_a_dropout_diluted_average():
+    from datetime import date
+
+    today = date.today()
+    ride = {
+        "activityType": {"typeKey": "road_biking"},
+        "startTimeLocal": f"{today.isoformat()}T07:00:00",
+        "duration": 3600,
+        "averageHR": 32.0,
+        "maxHR": 148.0,
+    }
+
+    series = core._training_load_series([ride], today, days=14, ftp=250, resting_hr=50)
+
+    assert all(day["load"] == 0 for day in series)
+
+
 def test_lap_falls_back_to_its_own_field_when_no_records_match():
     hr = core._hr_from_records([], [_lap(0, 10, avg_hr=142)])
 

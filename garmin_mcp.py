@@ -19,6 +19,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from garmin_core import (  # noqa: F401  (re-exported: tests and tools use these)
     TYPE_PREF,
     _analyse_heart_rates,
+    _avg_hr_fields,
     _clothing_advice,
     _dedup,
     _parse_fit_zip,
@@ -139,7 +140,7 @@ def get_recent_activities(limit: int = 10) -> list[dict[str, Any]]:
             "type": a.get("activityType", {}).get("typeKey"),
             "distance_km": round(a.get("distance", 0) / 1000, 2),
             "duration_min": int(a.get("duration", 0) // 60),
-            "avg_hr_bpm": a.get("averageHR"),
+            **_avg_hr_fields(a),
             "avg_power_w": a.get("avgPower"),
             "elevation_gain_m": a.get("elevationGain"),
             "calories": a.get("calories"),
@@ -280,7 +281,7 @@ def get_activity_detail(activity_id: str) -> dict[str, Any]:
 
     return {
         "activity_id": activity_id,
-        "avg_hr_bpm": summary.get("averageHR"),
+        **_avg_hr_fields(summary),
         "max_hr_bpm": summary.get("maxHR"),
         "avg_power_w": summary.get("averagePower") or summary.get("avgPower"),
         "max_power_w": summary.get("maxPower"),

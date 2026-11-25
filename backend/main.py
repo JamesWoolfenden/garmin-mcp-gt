@@ -419,7 +419,7 @@ def _is_cycling_activity(a: dict) -> bool:
 def _recent_rides_from_session(g, limit: int = 5) -> list[dict[str, Any]]:
     """Most recent cycling activities, for the Ride tab's activity list. Uses
     the caller's already-open Garmin session (see _compute_weight_trend)."""
-    from garmin_core import _dedup
+    from garmin_core import _avg_hr_fields, _dedup
 
     raw = g.get_activities(0, max(limit * 6, 30))
     cycling = [a for a in _dedup(raw) if _is_cycling_activity(a)][:limit]
@@ -431,7 +431,7 @@ def _recent_rides_from_session(g, limit: int = 5) -> list[dict[str, Any]]:
             "distance_km": round(a.get("distance", 0) / 1000, 2),
             "duration_min": int(a.get("duration", 0) // 60),
             "avg_power_w": a.get("avgPower"),
-            "avg_hr_bpm": a.get("averageHR"),
+            **_avg_hr_fields(a),
             "elevation_gain_m": a.get("elevationGain"),
             "calories": a.get("calories"),
         }
@@ -2251,7 +2251,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> 
                 "type": a.get("activityType", {}).get("typeKey"),
                 "distance_km": round(a.get("distance", 0) / 1000, 2),
                 "duration_min": int(a.get("duration", 0) // 60),
-                "avg_hr_bpm": a.get("averageHR"),
+                **gm._avg_hr_fields(a),
                 "avg_power_w": a.get("avgPower"),
                 "elevation_gain_m": a.get("elevationGain"),
                 "calories": a.get("calories"),
@@ -2275,7 +2275,7 @@ def _execute_garmin_tool(tool_name: str, tool_input: dict, uid: str, client) -> 
         power_zones = g.get_activity_power_in_timezones(activity_id)
         return {
             "activity_id": activity_id,
-            "avg_hr_bpm": summary.get("averageHR"),
+            **gm._avg_hr_fields(summary),
             "max_hr_bpm": summary.get("maxHR"),
             "avg_power_w": summary.get("averagePower") or summary.get("avgPower"),
             "max_power_w": summary.get("maxPower"),
