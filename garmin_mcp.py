@@ -997,11 +997,14 @@ def get_weekly_trends(weeks: int = 8) -> list[dict[str, Any]]:
         acts = _dedup(
             c.get_activities_by_date(week_start.isoformat(), week_end.isoformat())
         )
+        # "virtual_ride" is how Garmin files Zwift rides
         rides = [
             a
             for a in acts
-            if "cycling" in a.get("activityType", {}).get("typeKey", "").lower()
-            or "biking" in a.get("activityType", {}).get("typeKey", "").lower()
+            if any(
+                marker in (a.get("activityType", {}).get("typeKey") or "").lower()
+                for marker in ("cycling", "biking", "ride")
+            )
         ]
         results.append(
             {
