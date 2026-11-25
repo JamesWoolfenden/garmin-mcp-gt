@@ -457,6 +457,44 @@ def _at(series: dict[str, Any], key: str, i: int) -> Any:
     return vals[i] if vals is not None and i < len(vals) else None
 
 
+def _valid_hr_avg(readings: list) -> float | None:
+    """Mean of real heart-rate readings only. A dropped strap/watch signal is
+    recorded as 0 (or missing), and Garmin's own summary and lap averages count
+    those zeros, so a ride with a long dropout reports an absurd average."""
+    valid = [h for h in readings if h]
+    return round(sum(valid) / len(valid), 1) if valid else None
+
+
+def _hr_from_records(records: list[dict], laps: list[dict]) -> dict[str, Any]:
+    """Session and per-lap average HR recomputed from per-second FIT records,
+    ignoring zero/missing readings, plus how much of the ride had a signal."""
+    session_hrs = [r.get("heart_rate") for r in records]
+    valid_count = sum(1 for h in session_hrs if h)
+
+    lap_avgs: list[float | None] = []
+    for lap in laps:
+        start = lap.get("start_time")
+        elapsed = lap.get("total_elapsed_time")
+        in_lap = []
+        if start is not None and elapsed is not None:
+            end = start + timedelta(seconds=elapsed)
+            in_lap = [
+                r.get("heart_rate")
+                for r in records
+                if r.get("timestamp") is not None and start <= r["timestamp"] < end
+            ]
+        # No records matched the lap's time span: fall back to the lap's own field.
+        lap_avgs.append(
+            _valid_hr_avg(in_lap) if in_lap else lap.get("avg_heart_rate") or None
+        )
+
+    return {
+        "avg_hr_bpm": _valid_hr_avg(session_hrs),
+        "hr_coverage_pct": round(100 * valid_count / len(records)) if records else None,
+        "lap_avg_hr_bpm": lap_avgs,
+    }
+
+
 def _parse_fit_zip(zip_bytes: bytes) -> dict[str, Any]:
     """Extract TSS, IF, kJ, threshold power, and per-lap breakdown from a FIT zip."""
     import io
@@ -481,6 +519,7 @@ def _parse_fit_zip(zip_bytes: bytes) -> dict[str, Any]:
 
     sess = (messages.get("session_mesgs") or [{}])[0]
     laps = messages.get("lap_mesgs") or []
+    hr = _hr_from_records(messages.get("record_mesgs") or [], laps)
 
     def _lap_dict(lap: dict, i: int) -> dict:
         elapsed = lap.get("total_elapsed_time") or 0
@@ -490,7 +529,7 @@ def _parse_fit_zip(zip_bytes: bytes) -> dict[str, Any]:
             "duration_min": round(elapsed / 60, 1),
             "avg_power_w": lap.get("avg_power"),
             "normalized_power_w": lap.get("normalized_power"),
-            "avg_hr_bpm": lap.get("avg_heart_rate"),
+            "avg_hr_bpm": hr["lap_avg_hr_bpm"][i],
             "avg_cadence_rpm": lap.get("avg_cadence"),
             "total_work_kj": round((lap.get("total_work") or 0) / 1000, 1),
             "avg_left_pco_mm": lap.get("avg_left_pco"),
@@ -506,6 +545,8 @@ def _parse_fit_zip(zip_bytes: bytes) -> dict[str, Any]:
         "threshold_power_w": sess.get("threshold_power"),
         "training_load": sess.get("training_load_peak"),
         "avg_temperature_c": sess.get("avg_temperature"),
+        "avg_hr_bpm": hr["avg_hr_bpm"],
+        "hr_coverage_pct": hr["hr_coverage_pct"],
         "laps": [_lap_dict(lap, i) for i, lap in enumerate(laps)],
     }
 
