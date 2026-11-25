@@ -54,6 +54,16 @@ def test_non_cycling_running_activities_are_ignored():
     assert all(day["load"] == 0 for day in series)
 
 
+def test_virtual_ride_counts_toward_load():
+    # Garmin files Zwift rides as "virtual_ride"; they must not be dropped.
+    today = date.today()
+    acts = [_ride(days_ago=1, duration_s=3600, avg_power=250, type_key="virtual_ride")]
+
+    series = gm._training_load_series(acts, today, days=14, ftp=250, resting_hr=50)
+
+    assert any(day["load"] > 0 for day in series)
+
+
 def test_hr_fallback_used_when_no_power_data():
     today = date.today()
     acts = [_ride(days_ago=1, duration_s=3600, avg_power=None, avg_hr=140)]

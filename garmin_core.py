@@ -589,7 +589,13 @@ def _training_load_series(
 
     for a in acts:
         type_key = a.get("activityType", {}).get("typeKey", "").lower()
-        if not ("cycling" in type_key or "biking" in type_key or "running" in type_key):
+        # "virtual_ride" is how Garmin files Zwift rides; it matches none of the others.
+        if not (
+            "cycling" in type_key
+            or "biking" in type_key
+            or "running" in type_key
+            or "ride" in type_key
+        ):
             continue
         d = a.get("startTimeLocal", "")[:10]
         if d not in daily_load:
